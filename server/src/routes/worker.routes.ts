@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { requireProvider } from "../middleware/auth";
-import { authenticatedRateLimit, locationPingRateLimit } from "../middleware/rate-limit";
+import { authenticatedRateLimit, locationPingRateLimit, walletRedeemRateLimit } from "../middleware/rate-limit";
 import { idempotent } from "../middleware/idempotency";
 import * as workerController from "../controllers/worker.controller";
 import { getIncomingOffers, getMyWorkerBookings } from "../controllers/booking.controller";
 import { locationPing } from "../controllers/location.controller";
+import { getWallet, redeemWallet } from "../controllers/wallet.controller";
 
 const router = Router();
 
@@ -28,5 +29,14 @@ router.get("/me/bookings", requireProvider, authenticatedRateLimit, getMyWorkerB
 // Section 4.2's literal path — POST /api/v1/workers/location-ping, not
 // under /me/ like the routes above.
 router.post("/location-ping", requireProvider, locationPingRateLimit, locationPing);
+
+router.get("/me/wallet", requireProvider, authenticatedRateLimit, getWallet);
+router.post(
+  "/me/wallet/redeem",
+  requireProvider,
+  walletRedeemRateLimit,
+  idempotent("POST /workers/me/wallet/redeem"),
+  redeemWallet
+);
 
 export default router;

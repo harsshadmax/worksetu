@@ -14,6 +14,7 @@ import notificationRoutes from "./routes/notification.routes";
 import bookingRoutes from "./routes/booking.routes";
 import dispatchRoutes from "./routes/dispatch.routes";
 import customerRoutes from "./routes/customer.routes";
+import adminPaymentRoutes from "./routes/admin-payment.routes";
 import { requestId } from "./middleware/request-id";
 import { requestLogger } from "./middleware/request-logger";
 import { errorHandler, notFoundHandler } from "./utils/app-error";
@@ -54,6 +55,7 @@ app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/bookings", bookingRoutes);
 app.use("/api/v1/dispatch", dispatchRoutes);
 app.use("/api/v1/customers", customerRoutes);
+app.use("/api/v1/admin", adminPaymentRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

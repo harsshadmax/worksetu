@@ -3,6 +3,8 @@ import { requireCustomer, requireProvider, requireAnyRole } from "../middleware/
 import { authenticatedRateLimit } from "../middleware/rate-limit";
 import { idempotent } from "../middleware/idempotency";
 import * as bookingController from "../controllers/booking.controller";
+import { completeBooking } from "../controllers/booking-completion.controller";
+import { recordPaymentMethod } from "../controllers/payment.controller";
 
 const router = Router();
 
@@ -16,5 +18,13 @@ router.post(
 router.get("/:id", requireAnyRole, authenticatedRateLimit, bookingController.getBooking);
 router.post("/:id/cancel", requireAnyRole, authenticatedRateLimit, bookingController.cancelBooking);
 router.patch("/:id/start", requireProvider, authenticatedRateLimit, bookingController.startBooking);
+router.patch(
+  "/:id/complete",
+  requireProvider,
+  authenticatedRateLimit,
+  idempotent("PATCH /bookings/:id/complete"),
+  completeBooking
+);
+router.post("/:id/payment-method", requireCustomer, authenticatedRateLimit, recordPaymentMethod);
 
 export default router;

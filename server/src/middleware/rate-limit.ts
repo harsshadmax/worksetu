@@ -22,6 +22,7 @@ const registerLimiter = makeLimiter("rl:register", 5, 60 * 60); // 5 / hour per 
 const authenticatedGenericLimiter = makeLimiter("rl:auth", 300, 5 * 60); // 300 / 5 min per user
 const publicGenericLimiter = makeLimiter("rl:public", 100, 5 * 60); // 100 / 5 min per IP
 const locationPingLimiter = makeLimiter("rl:location-ping", 1, 5); // 1 / 5s per worker
+const walletRedeemLimiter = makeLimiter("rl:wallet-redeem", 5, 24 * 60 * 60); // 5 / day per worker
 
 function consumeOrReject(limiter: RateLimiterRedis, key: string, res: Response, next: NextFunction) {
   limiter
@@ -64,4 +65,9 @@ export function publicRateLimit(req: Request, res: Response, next: NextFunction)
 // debounce on the write itself)". Mount after requireProvider.
 export function locationPingRateLimit(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   consumeOrReject(locationPingLimiter, req.user!.id, res, next);
+}
+
+// Section 4.10: "5 / day per worker".
+export function walletRedeemRateLimit(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  consumeOrReject(walletRedeemLimiter, req.user!.id, res, next);
 }

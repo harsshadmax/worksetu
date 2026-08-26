@@ -1,0 +1,88 @@
+// src/controllers/wallet.controller.ts
+import { Response } from "express";
+import { z } from "zod";
+import { prisma } from "../lib/prisma";
+import { AuthenticatedRequest } from "../middleware/auth";
+import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
+
+export const getWallet = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const worker = await prisma.workerProfile.findUniqueOrThrow({ where: { userId: req.user!.id } });
+
+  // Fix, not a literal transcription: the illustrative Section 4.7 code
+  // derives availableBalance/pendingBalance from the same `take: 50` list
+  // it uses for display, which silently understates balance for any
+  // worker with more than 50 historical transactions. Balance is derived
+  // (Section 1.2.4/13.3) from the full transaction set; only the display
+  // list is capped.
+  const balanceRows = await prisma.creditTransaction.findMany({
+    where: {
+      workerProfileId: worker.id,
+      OR: [{ status: "COMPLETED" }, { status: "PROCESSING", type: "REDEMPTION" }]
+    },
+    select: { type: true, amount: true, status: true }
+  });
+  const availableBalance = balanceRows
+    .filter((t) => t.status === "COMPLETED")
+    .reduce((sum, t) => sum + (t.type === "REDEMPTION" ? -Number(t.amount) : Number(t.amount)), 0);
+  const pendingBalance = balanceRows
+    .filter((t) => t.status === "PROCESSING" && t.type === "REDEMPTION")
+    .reduce((sum, t) => sum + Number(t.amount), 0);
+
+  const transactions = await prisma.creditTransaction.findMany({
+    where: { workerProfileId: worker.id },
+    orderBy: { createdAt: "desc" },
+    take: 50
+  });
+
+  return res.json({
+    availableBalance,
+    pendingBalance,
+    transactions: transactions.map((t) => ({
+      id: t.id,
+      type: t.type,
+      amount: Number(t.amount),
+      status: t.status,
+      createdAt: t.createdAt
+    }))
+  });
+});
+
+const redeemSchema = z.object({
+  amount: z.number().positive(),
+  payoutMethod: z.enum(["BANK_TRANSFER_MOCK", "CASH_PICKUP"])
+});
+
+export const redeemWallet = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const parsed = redeemSchema.safeParse(req.body);
+  if (!parsed.success) return sendValidationError(req, res, parsed.error);
+
+  const worker = await prisma.workerProfile.findUniqueOrThrow({ where: { userId: req.user!.id } });
+
+  const transactionId = await prisma.$transaction(async (tx) => {
+    // Section 13.3 — row-level lock serializes concurrent redemption
+    // requests against the same worker's ledger.
+    await tx.$queryRaw`SELECT id FROM worker_profiles WHERE id = ${worker.id} FOR UPDATE`;
+
+    const completed = await tx.creditTransaction.findMany({
+      where: { workerProfileId: worker.id, status: "COMPLETED" }
+    });
+    const balance = completed.reduce((sum, t) => sum + (t.type === "REDEMPTION" ? -Number(t.amount) : Number(t.amount)), 0);
+
+    if (parsed.data.amount > balance) {
+      throw new AppError(409, "INSUFFICIENT_BALANCE", "Insufficient redeemable balance");
+    }
+
+    const created = await tx.creditTransaction.create({
+      data: {
+        workerProfileId: worker.id,
+        type: "REDEMPTION",
+        amount: parsed.data.amount,
+        status: "PROCESSING",
+        payoutMethod: parsed.data.payoutMethod
+      }
+    });
+    return created.id;
+  });
+
+  return res.json({ transactionId, status: "PROCESSING" });
+});

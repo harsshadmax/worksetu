@@ -706,7 +706,36 @@ async function main() {
   console.log("  Worker:       ", "ravi.kumar@example.com", "/", "Worker@123");
 }
 
-main()
+// Retry resilience, added after repeatedly observing transient Supabase
+// pooler disconnects (P1001/P1017/P2024) during this build's long-running
+// seed sessions. main() always starts with clearSeedOwnedData(), so a full
+// retry from the top is safe/idempotent — this also backs POST
+// /api/v1/admin/demo/reset (Section 15.9), where a flaky connection
+// mid-demo should not require an operator to notice and re-run manually.
+const RETRYABLE_PRISMA_CODES = new Set(["P1001", "P1017", "P2024"]);
+const MAX_ATTEMPTS = 3;
+
+function isRetryablePrismaError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "code" in err && RETRYABLE_PRISMA_CODES.has((err as { code: string }).code);
+}
+
+async function runWithRetry(): Promise<void> {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      await main();
+      return;
+    } catch (err) {
+      if (isRetryablePrismaError(err) && attempt < MAX_ATTEMPTS) {
+        console.warn(`Seed attempt ${attempt} failed with a transient connection error, retrying...`, err);
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+runWithRetry()
   .catch((err) => {
     console.error(err);
     process.exit(1);
