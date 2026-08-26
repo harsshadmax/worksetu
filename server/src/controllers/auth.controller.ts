@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import * as authService from "../services/auth.service";
-import { asyncHandler } from "../utils/app-error";
+import { asyncHandler, sendValidationError, AppError } from "../utils/app-error";
 import { requestMeta } from "../utils/request-meta";
 import { AuthenticatedRequest } from "../middleware/auth";
 
@@ -26,10 +26,6 @@ function clearRefreshCookie(res: Response) {
   res.clearCookie(REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
 }
 
-function validationError(res: Response, message: string) {
-  return res.status(400).json({ error: { code: "VALIDATION_FAILED", message } });
-}
-
 const customerRegisterSchema = z.object({
   fullName: z.string().min(2).max(100),
   email: z.string().email(),
@@ -43,7 +39,7 @@ const customerRegisterSchema = z.object({
 
 export const registerCustomer = asyncHandler(async (req: Request, res: Response) => {
   const parsed = customerRegisterSchema.safeParse(req.body);
-  if (!parsed.success) return validationError(res, parsed.error.issues[0]?.message ?? "Invalid request");
+  if (!parsed.success) return sendValidationError(req, res, parsed.error);
 
   const { user, tokens } = await authService.registerCustomer(parsed.data, requestMeta(req));
   setRefreshCookie(res, tokens.refreshToken, tokens.refreshTokenExpiresAt);
@@ -65,7 +61,7 @@ const workerRegisterSchema = z.object({
 
 export const registerWorker = asyncHandler(async (req: Request, res: Response) => {
   const parsed = workerRegisterSchema.safeParse(req.body);
-  if (!parsed.success) return validationError(res, parsed.error.issues[0]?.message ?? "Invalid request");
+  if (!parsed.success) return sendValidationError(req, res, parsed.error);
 
   const { user, tokens } = await authService.registerWorker(parsed.data, requestMeta(req));
   setRefreshCookie(res, tokens.refreshToken, tokens.refreshTokenExpiresAt);
@@ -84,7 +80,7 @@ const loginSchema = z.object({
 
 async function handleLogin(req: Request, res: Response, role: "CUSTOMER" | "WORKER" | "ADMIN") {
   const parsed = loginSchema.safeParse(req.body);
-  if (!parsed.success) return validationError(res, "identifier and password are required");
+  if (!parsed.success) return sendValidationError(req, res, parsed.error);
 
   const { user, tokens } = await authService.login(role, parsed.data.identifier, parsed.data.password, requestMeta(req));
   setRefreshCookie(res, tokens.refreshToken, tokens.refreshTokenExpiresAt);
@@ -98,7 +94,7 @@ export const loginAdmin = asyncHandler((req, res) => handleLogin(req, res, "ADMI
 export const refresh = asyncHandler(async (req: Request, res: Response) => {
   const raw = req.cookies?.[REFRESH_COOKIE_NAME];
   if (!raw) {
-    return res.status(401).json({ error: { code: "MISSING_REFRESH_TOKEN", message: "No session found" } });
+    throw new AppError(401, "MISSING_REFRESH_TOKEN", "No session found");
   }
   const tokens = await authService.refreshTokens(raw, requestMeta(req));
   setRefreshCookie(res, tokens.refreshToken, tokens.refreshTokenExpiresAt);
@@ -121,7 +117,7 @@ const passwordResetRequestSchema = z.object({ identifier: z.string().min(3) });
 
 export const passwordResetRequest = asyncHandler(async (req: Request, res: Response) => {
   const parsed = passwordResetRequestSchema.safeParse(req.body);
-  if (!parsed.success) return validationError(res, "identifier is required");
+  if (!parsed.success) return sendValidationError(req, res, parsed.error);
   await authService.requestPasswordReset(parsed.data.identifier);
   // Always 200 regardless of match — Section 6.5 enumeration mitigation.
   return res.status(200).json({ message: "If an account exists, a reset link has been sent" });
@@ -134,7 +130,7 @@ const passwordResetConfirmSchema = z.object({
 
 export const passwordResetConfirm = asyncHandler(async (req: Request, res: Response) => {
   const parsed = passwordResetConfirmSchema.safeParse(req.body);
-  if (!parsed.success) return validationError(res, "token and newPassword are required");
+  if (!parsed.success) return sendValidationError(req, res, parsed.error);
   await authService.confirmPasswordReset(parsed.data.token, parsed.data.newPassword);
   return res.status(200).json({ message: "Password updated, please log in again" });
 });
@@ -146,7 +142,7 @@ const verifyOtpSchema = z.object({
 
 export const verifyOtp = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const parsed = verifyOtpSchema.safeParse(req.body);
-  if (!parsed.success) return validationError(res, "channel and a 6-digit code are required");
+  if (!parsed.success) return sendValidationError(req, res, parsed.error);
   await authService.verifyOtp(req.user!.id, parsed.data.channel, parsed.data.code);
   return res.json({ verified: true });
 });

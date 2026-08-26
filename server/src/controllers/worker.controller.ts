@@ -2,15 +2,13 @@ import { Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { AuthenticatedRequest } from "../middleware/auth";
-import { asyncHandler, AppError } from "../utils/app-error";
+import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
 
 const availabilitySchema = z.object({ status: z.enum(["AVAILABLE", "OFF_DUTY"]) });
 
 export const updateAvailability = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const parsed = availabilitySchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: { code: "VALIDATION_FAILED", message: "status must be AVAILABLE or OFF_DUTY" } });
-  }
+  if (!parsed.success) return sendValidationError(req, res, parsed.error);
 
   // Section 7.3 — resolved from the authenticated identity, never a body/path field.
   const worker = await prisma.workerProfile.findUnique({ where: { userId: req.user!.id } });
