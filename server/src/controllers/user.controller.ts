@@ -4,6 +4,52 @@ import { prisma } from "../lib/prisma";
 import { AuthenticatedRequest } from "../middleware/auth";
 import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
 
+// New endpoint, added in PHASE 12 — Section 4.2's route table has no
+// read-own-profile route (only PATCH /users/me existed), yet the JWT
+// payload deliberately excludes name/email/phone (Section 6's PII-
+// minimization rule), leaving the frontend with no way to know a logged-in
+// user's display name after login (as opposed to registration, where the
+// name is already client-known from the form). This is the natural
+// read-side counterpart to the existing PATCH /users/me, gated the same
+// way (any authenticated role, own row only via req.user.id).
+export const getProfile = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { id: req.user!.id },
+    include: {
+      customerProfile: true,
+      workerProfile: { include: { cooperative: true } },
+      adminProfile: true,
+      preference: true
+    }
+  });
+
+  return res.json({
+    userId: user.id,
+    fullName: user.fullName,
+    email: user.email,
+    phone: user.phone,
+    avatarUrl: user.avatarUrl,
+    role: user.role,
+    theme: user.preference?.theme ?? "LIGHT",
+    language: user.preference?.language ?? "en",
+    customerProfile: user.customerProfile ? { id: user.customerProfile.id, defaultAddress: user.customerProfile.defaultAddress } : null,
+    workerProfile: user.workerProfile
+      ? {
+          id: user.workerProfile.id,
+          cooperativeId: user.workerProfile.cooperativeId,
+          cooperativeName: user.workerProfile.cooperative.name,
+          verificationStatus: user.workerProfile.verificationStatus,
+          availabilityStatus: user.workerProfile.availabilityStatus,
+          suspended: user.workerProfile.suspendedAt !== null,
+          ratingAverage: user.workerProfile.ratingAverage,
+          ratingCount: user.workerProfile.ratingCount,
+          serviceAreaRadiusKm: user.workerProfile.serviceAreaRadiusKm
+        }
+      : null,
+    adminProfile: user.adminProfile ? { isSuper: user.adminProfile.isSuper, title: user.adminProfile.title } : null
+  });
+});
+
 // Section 1.2.9 — exact editable field set; no email/role field accepted
 // (role is never client-settable, Section 7.4).
 const updateProfileSchema = z.object({

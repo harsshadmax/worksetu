@@ -15,3 +15,20 @@ export const getPlatformStats = asyncHandler(async (_req: Request, res: Response
   });
   return res.json(stats);
 });
+
+// New endpoint, added in PHASE 12 — the worker registration form's
+// cooperative dropdown (Section 1.2.1) needs a list of cooperatives to
+// choose from before the applicant has an account, but Section 4.2 only
+// ever specified GET /cooperatives/:id (JWT Customer/Provider, single) and
+// GET /admin/cooperatives (JWT Admin, list) — no unauthenticated list
+// route existed. This mirrors the existing GET /public/stats "Public"
+// pattern and returns only the fields already exposed by the authenticated
+// single-cooperative endpoint (never registrationNumber, which is
+// admin-only per Section 1.3.7).
+export const listPublicCooperatives = asyncHandler(async (_req: Request, res: Response) => {
+  const cooperatives = await getOrSetCache("cooperatives:public:all", 300, async () => {
+    const rows = await prisma.cooperative.findMany({ orderBy: { name: "asc" } });
+    return rows.map((c) => ({ id: c.id, name: c.name, location: c.location, members: c.members, founded: c.founded }));
+  });
+  return res.json(cooperatives);
+});

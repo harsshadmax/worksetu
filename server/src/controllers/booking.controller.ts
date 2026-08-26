@@ -122,6 +122,7 @@ export const getBooking = asyncHandler(async (req: AuthenticatedRequest, res: Re
   return res.json({
     id: booking.id,
     status: booking.status,
+    estimatedTotal: Number(booking.estimatedTotal),
     worker: booking.assignedWorker
       ? {
           id: booking.assignedWorker.id,
