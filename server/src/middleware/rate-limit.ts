@@ -21,6 +21,7 @@ const loginLimiter = makeLimiter("rl:login", 10, 15 * 60); // 10 / 15 min per IP
 const registerLimiter = makeLimiter("rl:register", 5, 60 * 60); // 5 / hour per IP
 const authenticatedGenericLimiter = makeLimiter("rl:auth", 300, 5 * 60); // 300 / 5 min per user
 const publicGenericLimiter = makeLimiter("rl:public", 100, 5 * 60); // 100 / 5 min per IP
+const locationPingLimiter = makeLimiter("rl:location-ping", 1, 5); // 1 / 5s per worker
 
 function consumeOrReject(limiter: RateLimiterRedis, key: string, res: Response, next: NextFunction) {
   limiter
@@ -57,4 +58,10 @@ export function authenticatedRateLimit(req: AuthenticatedRequest, res: Response,
 
 export function publicRateLimit(req: Request, res: Response, next: NextFunction) {
   consumeOrReject(publicGenericLimiter, req.ip ?? "unknown", res, next);
+}
+
+// Section 4.10: "1 / 5s per worker (in addition to the existing 10s Redis
+// debounce on the write itself)". Mount after requireProvider.
+export function locationPingRateLimit(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  consumeOrReject(locationPingLimiter, req.user!.id, res, next);
 }

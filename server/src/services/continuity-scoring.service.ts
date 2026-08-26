@@ -14,6 +14,12 @@ export interface CandidateWorker {
 // original Section 4.4.1 listing used, which ignored the per-worker column
 // the schema exists specifically to honor. Applied to both the ST_DWithin
 // eligibility filter and the continuityScore proximity term.
+//
+// Section 12.6 (PHASE 8) — the lastLocationAt recency filter below excludes
+// stale-location workers from candidate scoring rather than offering them
+// a job they can no longer be accurately routed to, exactly as Section
+// 12.6 specifies should be "added to Section 4.4.1's WHERE clause during
+// implementation."
 export async function scoreCandidateWorkers(params: {
   serviceCategoryId: string;
   customerId: string;
@@ -55,6 +61,7 @@ export async function scoreCandidateWorkers(params: {
       AND wp."verificationStatus" = 'APPROVED'
       AND wp."availabilityStatus" = 'AVAILABLE'
       AND wp."currentLocation" IS NOT NULL
+      AND wp."lastLocationAt" > now() - interval '120 seconds'
       AND ST_DWithin(
         wp."currentLocation"::geography,
         ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography,

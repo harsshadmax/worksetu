@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { requireProvider } from "../middleware/auth";
-import { authenticatedRateLimit } from "../middleware/rate-limit";
+import { authenticatedRateLimit, locationPingRateLimit } from "../middleware/rate-limit";
 import { idempotent } from "../middleware/idempotency";
 import * as workerController from "../controllers/worker.controller";
 import { getIncomingOffers, getMyWorkerBookings } from "../controllers/booking.controller";
+import { locationPing } from "../controllers/location.controller";
 
 const router = Router();
 
@@ -23,5 +24,9 @@ router.get("/me/demand-heatmap", requireProvider, authenticatedRateLimit, worker
 router.get("/me/welfare", requireProvider, authenticatedRateLimit, workerController.getWelfare);
 router.get("/me/incoming", requireProvider, authenticatedRateLimit, getIncomingOffers);
 router.get("/me/bookings", requireProvider, authenticatedRateLimit, getMyWorkerBookings);
+
+// Section 4.2's literal path — POST /api/v1/workers/location-ping, not
+// under /me/ like the routes above.
+router.post("/location-ping", requireProvider, locationPingRateLimit, locationPing);
 
 export default router;
