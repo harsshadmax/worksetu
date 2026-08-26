@@ -60,4 +60,16 @@ export function requireAuth(...allowedRoles: Role[]) {
 export const requireCustomer = requireAuth("CUSTOMER");
 export const requireProvider = requireAuth("WORKER");
 export const requireAdmin = requireAuth("ADMIN");
+export const requireProviderOrAdmin = requireAuth("WORKER", "ADMIN");
 export const requireAnyRole = requireAuth("CUSTOMER", "WORKER", "ADMIN");
+
+// Section 15.6 — the single most sensitive action in the system
+// (PATCH /admin/config) additionally requires AdminProfile.isSuper = true.
+// Mounted after requireAdmin, so req.user is already populated and role-checked.
+export async function requireSuperAdmin(req: AuthenticatedRequest, _res: Response, next: NextFunction) {
+  const adminProfile = await prisma.adminProfile.findUnique({ where: { userId: req.user!.id } });
+  if (!adminProfile?.isSuper) {
+    return next(new AppError(403, "SUPER_ADMIN_REQUIRED", "This action requires super-admin privileges"));
+  }
+  next();
+}

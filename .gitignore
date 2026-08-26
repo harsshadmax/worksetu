@@ -13,6 +13,9 @@ server/node_modules/
 server/dist/
 dist/
 
+# Section 16 — private local-disk document storage stand-in (never public)
+server/storage-private/
+
 # Logs
 *.log
 npm-debug.log*
