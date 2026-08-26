@@ -7,6 +7,7 @@ import { acquireBookingLock, redis } from "../lib/redis-lock";
 import { transitionBookingStatus } from "../services/booking-state-machine.service";
 import { io } from "../lib/socket";
 import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
+import { dispatchNotification } from "../services/notification-dispatcher.service";
 
 const respondSchema = z.object({
   response: z.enum(["ACCEPT", "DECLINE"])
@@ -87,6 +88,20 @@ export const respondToDispatch = asyncHandler(async (req: AuthenticatedRequest, 
       phase: "ASSIGNED",
       candidateStatus: { workerId: dispatchLog.workerId, offerStatus: "ACCEPTED" }
     });
+
+    // Section 11.1 — "customer notified 'worker assigned'".
+    const assignedBooking = await prisma.booking.findUnique({
+      where: { id: dispatchLog.bookingId },
+      include: { customer: true, assignedWorker: { include: { user: true } } }
+    });
+    if (assignedBooking) {
+      await dispatchNotification({
+        userId: assignedBooking.customer.userId,
+        title: "Worker assigned",
+        body: `${assignedBooking.assignedWorker?.user.fullName ?? "A cooperative worker"} has been assigned to your booking.`,
+        dedupeKey: `booking:${dispatchLog.bookingId}:assigned`
+      });
+    }
 
     // Auto-confirm after 60s unless the customer cancels first (Section
     // 11.4's sweep is the durability backstop for this same transition).

@@ -6,6 +6,7 @@ import { AuthenticatedRequest } from "../middleware/auth";
 import { enqueueDispatch } from "../services/dispatch.service";
 import { transitionBookingStatus } from "../services/booking-state-machine.service";
 import { io } from "../lib/socket";
+import { dispatchNotification } from "../services/notification-dispatcher.service";
 import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
 import { paginationQuerySchema, paginate } from "../utils/pagination";
 
@@ -206,6 +207,25 @@ export const cancelBooking = asyncHandler(async (req: AuthenticatedRequest, res:
       });
     }
   });
+
+  // Section 11.1 — "the other party notified". Whichever side did not
+  // initiate the cancellation hears about it; a worker on a booking still
+  // in REQUESTED/DISPATCHING_* (not yet assigned) has nothing to notify.
+  if (isOwnerCustomer && booking.assignedWorker) {
+    await dispatchNotification({
+      userId: booking.assignedWorker.user.id,
+      title: "Booking cancelled",
+      body: "The customer has cancelled this booking.",
+      dedupeKey: `booking:${booking.id}:cancelled`
+    });
+  } else if (isAssignedWorker) {
+    await dispatchNotification({
+      userId: booking.customer.userId,
+      title: "Booking cancelled",
+      body: "The assigned worker has cancelled this booking.",
+      dedupeKey: `booking:${booking.id}:cancelled`
+    });
+  }
 
   return res.json({ bookingId: booking.id, status: "CANCELLED" });
 });

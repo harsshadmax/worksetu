@@ -3,6 +3,7 @@ import { Response } from "express";
 import { prisma } from "../lib/prisma";
 import { AuthenticatedRequest } from "../middleware/auth";
 import { transitionBookingStatus } from "../services/booking-state-machine.service";
+import { dispatchNotification } from "../services/notification-dispatcher.service";
 import { asyncHandler, AppError } from "../utils/app-error";
 
 export const completeBooking = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
@@ -47,6 +48,17 @@ export const completeBooking = asyncHandler(async (req: AuthenticatedRequest, re
       data: { availabilityStatus: "AVAILABLE", currentBookingId: null }
     });
   });
+
+  // Section 11.1 — "customer notified 'rate your service'".
+  const customerProfile = await prisma.customerProfile.findUnique({ where: { id: booking.customerId } });
+  if (customerProfile) {
+    await dispatchNotification({
+      userId: customerProfile.userId,
+      title: "Service completed",
+      body: "Your booking has been marked completed. Please rate your experience.",
+      dedupeKey: `booking:${booking.id}:completed`
+    });
+  }
 
   return res.json({ bookingId: booking.id, status: "COMPLETED" });
 });

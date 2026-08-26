@@ -681,8 +681,16 @@ model Notification {
   title     String
   body      String
   isRead    Boolean              @default(false)
+  /// Section 18.2 — stable idempotency-style key for system-generated
+  /// notifications (e.g. "booking:{id}:assigned"), so a retried dispatch
+  /// (server restart mid-fan-out) does not create a duplicate row for the
+  /// same event. Null for free-text admin broadcasts, which have no
+  /// natural dedupe key. Added in PHASE 10 — absent from the literal
+  /// Section 3 schema block, which predates Section 18.2's requirement.
+  dedupeKey String?
   createdAt DateTime             @default(now())
 
+  @@unique([userId, dedupeKey])
   @@index([userId])
   @@index([audience])
   /// covers "unread count" / "unread feed" queries (Section 18)

@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { requireCustomer, requireProvider, requireAnyRole } from "../middleware/auth";
-import { authenticatedRateLimit } from "../middleware/rate-limit";
+import { authenticatedRateLimit, reviewRateLimit } from "../middleware/rate-limit";
 import { idempotent } from "../middleware/idempotency";
 import * as bookingController from "../controllers/booking.controller";
 import { completeBooking } from "../controllers/booking-completion.controller";
 import { recordPaymentMethod } from "../controllers/payment.controller";
+import { submitReview } from "../controllers/review.controller";
 
 const router = Router();
 
@@ -26,5 +27,12 @@ router.patch(
   completeBooking
 );
 router.post("/:id/payment-method", requireCustomer, authenticatedRateLimit, recordPaymentMethod);
+router.post(
+  "/:id/review",
+  requireCustomer,
+  reviewRateLimit,
+  idempotent("POST /bookings/:id/review"),
+  submitReview
+);
 
 export default router;

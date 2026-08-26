@@ -23,6 +23,7 @@ const authenticatedGenericLimiter = makeLimiter("rl:auth", 300, 5 * 60); // 300 
 const publicGenericLimiter = makeLimiter("rl:public", 100, 5 * 60); // 100 / 5 min per IP
 const locationPingLimiter = makeLimiter("rl:location-ping", 1, 5); // 1 / 5s per worker
 const walletRedeemLimiter = makeLimiter("rl:wallet-redeem", 5, 24 * 60 * 60); // 5 / day per worker
+const reviewLimiter = makeLimiter("rl:review", 30, 24 * 60 * 60); // 30 / day per customer (abuse ceiling; 1/booking is schema-enforced)
 
 function consumeOrReject(limiter: RateLimiterRedis, key: string, res: Response, next: NextFunction) {
   limiter
@@ -70,4 +71,11 @@ export function locationPingRateLimit(req: AuthenticatedRequest, res: Response, 
 // Section 4.10: "5 / day per worker".
 export function walletRedeemRateLimit(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   consumeOrReject(walletRedeemLimiter, req.user!.id, res, next);
+}
+
+// Section 4.10: "30/day per customer as an abuse ceiling" (the 1-per-
+// booking rule is enforced structurally by Review.bookingId's unique
+// constraint, not by this limiter).
+export function reviewRateLimit(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  consumeOrReject(reviewLimiter, req.user!.id, res, next);
 }
