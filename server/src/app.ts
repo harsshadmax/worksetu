@@ -1,3 +1,5 @@
+import "dotenv/config"; // must be first — every other module reads process.env at load time
+import http from "http";
 import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
@@ -9,9 +11,14 @@ import serviceRoutes from "./routes/service.routes";
 import cooperativeRoutes from "./routes/cooperative.routes";
 import userRoutes from "./routes/user.routes";
 import notificationRoutes from "./routes/notification.routes";
+import bookingRoutes from "./routes/booking.routes";
+import dispatchRoutes from "./routes/dispatch.routes";
+import customerRoutes from "./routes/customer.routes";
 import { requestId } from "./middleware/request-id";
 import { requestLogger } from "./middleware/request-logger";
 import { errorHandler, notFoundHandler } from "./utils/app-error";
+import { io } from "./lib/socket";
+import { startReconciliationSweep } from "./services/dispatch-reconciliation.service";
 
 const app = express();
 
@@ -44,16 +51,26 @@ app.use("/api/v1/services", serviceRoutes);
 app.use("/api/v1/cooperatives", cooperativeRoutes);
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
+app.use("/api/v1/bookings", bookingRoutes);
+app.use("/api/v1/dispatch", dispatchRoutes);
+app.use("/api/v1/customers", customerRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
 
 const PORT = Number(process.env.PORT) || 4000;
 
+// Socket.io needs a raw http.Server to attach to, not just the Express
+// app — the plain app.listen() used through PHASE 5 no longer suffices
+// now that the dispatch engine (Section 4.4.3/4.4.4) emits real events.
+const httpServer = http.createServer(app);
+io.attach(httpServer);
+
 if (require.main === module) {
-  app.listen(PORT, () => {
+  httpServer.listen(PORT, () => {
     console.log(`Worksetu API listening on port ${PORT}`);
   });
+  startReconciliationSweep(); // Section 11.4
 }
 
 export default app;

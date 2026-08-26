@@ -3,13 +3,14 @@ import { requireProvider } from "../middleware/auth";
 import { authenticatedRateLimit } from "../middleware/rate-limit";
 import { idempotent } from "../middleware/idempotency";
 import * as workerController from "../controllers/worker.controller";
+import { getIncomingOffers, getMyWorkerBookings } from "../controllers/booking.controller";
 
 const router = Router();
 
-// Not one of Section 4.9's six named routes (none of those exist until
-// PHASE 6/9/11), but the same idempotency middleware applies cleanly to
-// any authenticated mutation — demonstrated/verified here ahead of being
-// wired onto the real six routes as they're built.
+// Not one of Section 4.9's six named routes, but the same idempotency
+// middleware applies cleanly to any authenticated mutation — first
+// demonstrated here in PHASE 4, ahead of PHASE 6 wiring it onto two of
+// the real six routes below (POST /bookings/request, POST /dispatch/respond).
 router.patch(
   "/me/availability",
   requireProvider,
@@ -20,5 +21,7 @@ router.patch(
 
 router.get("/me/demand-heatmap", requireProvider, authenticatedRateLimit, workerController.getDemandHeatmap);
 router.get("/me/welfare", requireProvider, authenticatedRateLimit, workerController.getWelfare);
+router.get("/me/incoming", requireProvider, authenticatedRateLimit, getIncomingOffers);
+router.get("/me/bookings", requireProvider, authenticatedRateLimit, getMyWorkerBookings);
 
 export default router;
