@@ -4,6 +4,11 @@ import cors from "cors";
 import helmet from "helmet";
 import authRoutes from "./routes/auth.routes";
 import workerRoutes from "./routes/worker.routes";
+import publicRoutes from "./routes/public.routes";
+import serviceRoutes from "./routes/service.routes";
+import cooperativeRoutes from "./routes/cooperative.routes";
+import userRoutes from "./routes/user.routes";
+import notificationRoutes from "./routes/notification.routes";
 import { requestId } from "./middleware/request-id";
 import { requestLogger } from "./middleware/request-logger";
 import { errorHandler, notFoundHandler } from "./utils/app-error";
@@ -34,6 +39,11 @@ app.use(cookieParser());
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/workers", workerRoutes);
+app.use("/api/v1/public", publicRoutes);
+app.use("/api/v1/services", serviceRoutes);
+app.use("/api/v1/cooperatives", cooperativeRoutes);
+app.use("/api/v1/users", userRoutes);
+app.use("/api/v1/notifications", notificationRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

@@ -18,4 +18,7 @@ router.patch(
   workerController.updateAvailability
 );
 
+router.get("/me/demand-heatmap", requireProvider, authenticatedRateLimit, workerController.getDemandHeatmap);
+router.get("/me/welfare", requireProvider, authenticatedRateLimit, workerController.getWelfare);
+
 export default router;

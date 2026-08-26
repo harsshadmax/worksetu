@@ -339,10 +339,13 @@ async function main() {
       estimatedTotal: b.estimatedCost,
       status: b.status as BookingStatus,
       assignedWorkerId: b.status === "CANCELLED" ? null : workerProfileId,
+      // A real 1-hour gap between start and completion — matches
+      // Invoice.hoursBilled's own default of 1 — instead of a zero-duration
+      // job, so hours-worked aggregates (Section 1.2.7) have something to sum.
       confirmedAt: b.status === "SETTLED" ? createdAt : null,
       startedAt: b.status === "SETTLED" ? createdAt : null,
-      completedAt: b.status === "SETTLED" ? createdAt : null,
-      settledAt: b.status === "SETTLED" ? createdAt : null,
+      completedAt: b.status === "SETTLED" ? new Date(createdAt.getTime() + 60 * 60 * 1000) : null,
+      settledAt: b.status === "SETTLED" ? new Date(createdAt.getTime() + 60 * 60 * 1000) : null,
       cancelledAt: b.status === "CANCELLED" ? createdAt : null,
       cancelReason: b.status === "CANCELLED" ? "Customer cancelled before a worker accepted the offer" : null,
       createdAt
@@ -625,9 +628,9 @@ async function main() {
     status: "COMPLETED",
     assignedWorkerId: rajeshId,
     confirmedAt: now,
-    startedAt: now,
+    startedAt: new Date(now.getTime() - 60 * 60 * 1000),
     completedAt: now,
-    createdAt: now
+    createdAt: new Date(now.getTime() - 60 * 60 * 1000)
   });
   await prisma.dispatchLog.create({
     data: { bookingId: completedId, workerId: rajeshId, attemptNumber: "ATTEMPT_1", distanceKm: 1.0, continuityScore: 82, offeredAt: now, respondedAt: now, outcome: "ACCEPTED" }
