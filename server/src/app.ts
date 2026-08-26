@@ -1,6 +1,31 @@
-// PHASE 0 placeholder — Express app entrypoint.
-// Real wiring (middleware, routes, Section 4.2 route matrix) lands in
-// PHASE 4 (validation/security framework) and PHASE 5 onward per
-// Section 28 of system-blueprint.md. Intentionally empty besides this
-// note so the TypeScript project has a valid compile target.
-export {};
+import express from "express";
+import cookieParser from "cookie-parser";
+import helmet from "helmet";
+import authRoutes from "./routes/auth.routes";
+import workerRoutes from "./routes/worker.routes";
+import { errorHandler, notFoundHandler } from "./utils/app-error";
+
+const app = express();
+
+// Baseline security headers now (Section 8.3); CORS allowlist, request-id
+// middleware, and rate limiting are formalized in PHASE 4 (Section 8.2,
+// 8.3, 4.10).
+app.use(helmet());
+app.use(express.json({ limit: "1mb" }));
+app.use(cookieParser());
+
+app.use("/api/v1/auth", authRoutes);
+app.use("/api/v1/workers", workerRoutes);
+
+app.use(notFoundHandler);
+app.use(errorHandler);
+
+const PORT = Number(process.env.PORT) || 4000;
+
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Worksetu API listening on port ${PORT}`);
+  });
+}
+
+export default app;

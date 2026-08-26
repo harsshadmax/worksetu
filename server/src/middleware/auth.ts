@@ -1,0 +1,63 @@
+import { Request, Response, NextFunction } from "express";
+import { prisma } from "../lib/prisma";
+import { verifyAccessToken, Role } from "../lib/jwt";
+import { AppError } from "../utils/app-error";
+
+export interface AuthenticatedRequest extends Request {
+  user?: { id: string; role: Role };
+}
+
+function extractToken(req: Request): string | null {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith("Bearer ")) return null;
+  return header.slice(7);
+}
+
+// Section 4.1 base guard, extended per Section 27's worked example and
+// Section 6.3/6.4: a structurally valid, unexpired, correctly-signed token
+// is still rejected if its tokenVersion has been superseded (revoked
+// session) or its owner has been suspended/soft-deleted since issuance.
+export function requireAuth(...allowedRoles: Role[]) {
+  return async (req: AuthenticatedRequest, _res: Response, next: NextFunction) => {
+    const token = extractToken(req);
+    if (!token) {
+      return next(new AppError(401, "MISSING_TOKEN", "Authentication required"));
+    }
+
+    let payload;
+    try {
+      payload = verifyAccessToken(token);
+    } catch (err) {
+      if (err instanceof Error && err.name === "TokenExpiredError") {
+        return next(new AppError(401, "TOKEN_EXPIRED", "Session expired, please log in again"));
+      }
+      return next(new AppError(401, "INVALID_TOKEN", "Invalid authentication token"));
+    }
+
+    if (!allowedRoles.includes(payload.role)) {
+      return next(new AppError(403, "FORBIDDEN_ROLE", "You do not have permission to access this resource"));
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { id: true, role: true, tokenVersion: true, accountStatus: true, deletedAt: true }
+    });
+    if (!user || user.deletedAt) {
+      return next(new AppError(401, "INVALID_TOKEN", "Invalid authentication token"));
+    }
+    if (user.tokenVersion !== payload.tokenVersion) {
+      return next(new AppError(401, "TOKEN_REVOKED", "Session has been revoked, please log in again"));
+    }
+    if (user.accountStatus === "SUSPENDED") {
+      return next(new AppError(403, "ACCOUNT_SUSPENDED", "This account has been suspended"));
+    }
+
+    req.user = { id: user.id, role: user.role as Role };
+    next();
+  };
+}
+
+export const requireCustomer = requireAuth("CUSTOMER");
+export const requireProvider = requireAuth("WORKER");
+export const requireAdmin = requireAuth("ADMIN");
+export const requireAnyRole = requireAuth("CUSTOMER", "WORKER", "ADMIN");
