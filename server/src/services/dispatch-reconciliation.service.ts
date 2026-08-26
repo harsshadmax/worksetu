@@ -89,6 +89,7 @@ async function sweepStaleTop3Offers(top3TimeoutSeconds: number): Promise<void> {
       }))
     });
     for (const c of poolCandidates) {
+      await io.in(`worker:${c.workerId}`).socketsJoin(`booking:${booking.id}`);
       io.to(`worker:${c.workerId}`).emit("dispatch:offer", { bookingId: booking.id, phase: "POOL" });
     }
     io.to(`booking:${booking.id}`).emit("dispatch:update", {

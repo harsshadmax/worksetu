@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { AuthenticatedRequest } from "../middleware/auth";
 import { enqueueDispatch } from "../services/dispatch.service";
 import { transitionBookingStatus } from "../services/booking-state-machine.service";
+import { io } from "../lib/socket";
 import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
 import { paginationQuerySchema, paginate } from "../utils/pagination";
 
@@ -66,6 +67,12 @@ export const requestBooking = asyncHandler(async (req: AuthenticatedRequest, res
 
     return id;
   });
+
+  // Section 12.3 — the customer's currently-connected sockets join this
+  // booking's room immediately, so a client already connected when they
+  // submit the request (not just one that connects afterward) still
+  // receives live dispatch:update events without polling.
+  await io.in(`user:${req.user!.id}`).socketsJoin(`booking:${bookingId}`);
 
   // Fix, not a literal transcription: Section 4.3's illustrative code
   // awaits enqueueDispatch(booking) inline, but enqueueDispatch runs the

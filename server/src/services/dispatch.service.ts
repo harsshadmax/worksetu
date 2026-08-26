@@ -73,6 +73,12 @@ async function runSequentialOfferQueue(
       }
     });
 
+    // Section 12.3 — a worker's currently-connected sockets join the
+    // booking room the moment they're offered it (not just at their own
+    // connect-time snapshot, since this offer may be created well after
+    // they connected).
+    await io.in(`worker:${candidate.workerId}`).socketsJoin(`booking:${bookingId}`);
+
     io.to(`worker:${candidate.workerId}`).emit("dispatch:offer", {
       dispatchLogId: dispatchLog.id,
       bookingId,
@@ -115,6 +121,7 @@ async function runBroadcastOfferPool(
   );
 
   for (const candidate of pool) {
+    await io.in(`worker:${candidate.workerId}`).socketsJoin(`booking:${bookingId}`);
     io.to(`worker:${candidate.workerId}`).emit("dispatch:offer", {
       bookingId,
       phase: "POOL",
