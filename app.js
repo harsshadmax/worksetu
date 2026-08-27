@@ -367,13 +367,21 @@ const app = createApp({
     };
 
     const handleRegister = async () => {
+      // Validated before entering the try/finally below on purpose: that
+      // finally block clears every typed field (name/email/phone/etc) once
+      // a submit attempt genuinely starts, which is correct once we're
+      // actually calling the API, but was wiping the whole form and
+      // showing an unrelated "No data found" message just for leaving the
+      // Terms checkbox unchecked -- confirmed live as the reported "terms
+      // checkbox is broken" bug. Returning here keeps the user's input
+      // intact so re-checking the box and resubmitting just works.
+      if (!authAcceptedTerms.value) {
+        registerError.value = t("mustAcceptTerms");
+        return;
+      }
       registerError.value = "";
       authBusy.value = true;
       try {
-        if (!authAcceptedTerms.value) {
-          registerError.value = t("noDataFound");
-          return;
-        }
         if (currentRole.value === "customer") {
           const { lat, lng } = await getCoordinates();
           const res = await api.request("POST", "/auth/customer/register", {
