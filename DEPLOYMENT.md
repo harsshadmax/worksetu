@@ -18,10 +18,20 @@ frontend only is included at the bottom as an alternative.
 
 - **Requirement**: PostgreSQL with the PostGIS extension enabled (Supabase's
   free tier provides both).
-- **Connection strings**: `DATABASE_URL` (pooled, PgBouncer transaction mode
-  — used by the running app) and `DIRECT_URL` (unpooled — used only by
-  Prisma's migration tooling). Both come from your Supabase project's
-  connection-string page.
+- **Connection strings**: get both from Supabase's dashboard — **Connect**
+  button (top of the project page) → select **Prisma** as the framework →
+  copy the shown block verbatim into `DATABASE_URL`/`DIRECT_URL`. Don't
+  hand-assemble these; two real gotchas confirmed live while deploying this
+  project:
+  - The pooler username must be `postgres.<project-ref>`, not bare
+    `postgres` — the pooler is shared infrastructure and uses the suffix
+    to route to your project (bare `postgres` fails with
+    `P1000: Authentication failed`).
+  - For `DIRECT_URL`, use the **session pooler** (same pooler hostname,
+    port `5432`), not Supabase's raw `db.<project-ref>.supabase.co:5432`
+    host — that raw host resolves IPv6-only and fails with
+    `P1001: Can't reach database server` on IPv4-only hosts like Render,
+    even though it works fine locally on a network with IPv6.
 - **Migrate**: `cd server && npm run prisma:deploy` (applies
   `prisma/migrations/` — safe/idempotent, only applies what isn't already
   applied; also runs automatically as part of the Render build command
