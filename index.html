@@ -880,10 +880,6 @@
                     <label class="block text-[10px] font-bold uppercase-track mb-2 text-custom-sec">{{ t('passwordPlaceholder') }}</label>
                     <input type="password" v-model="authPassword" required class="w-full px-4 py-3 border border-custom-border bg-custom-bg text-custom-main focus:outline-none">
                   </div>
-                  <label class="flex items-center gap-2 text-xs text-custom-sec font-medium">
-                    <input type="checkbox" v-model="authAcceptedTerms" required>
-                    <span>{{ t('acceptTermsLabel') }}</span>
-                  </label>
                   <button
                     type="submit"
                     :disabled="authBusy"
@@ -1499,10 +1495,6 @@
                     <label class="block text-[10px] font-bold uppercase-track mb-2 text-custom-sec">{{ t('passwordPlaceholder') }}</label>
                     <input type="password" v-model="authPassword" required class="w-full px-4 py-3 border border-custom-border bg-custom-bg text-custom-main focus:outline-none">
                   </div>
-                  <label class="flex items-center gap-2 text-xs text-custom-sec font-medium">
-                    <input type="checkbox" v-model="authAcceptedTerms" required>
-                    <span>{{ t('acceptTermsLabel') }}</span>
-                  </label>
                   <button type="submit" :disabled="authBusy" class="w-full py-4 bg-custom-primary text-white text-xs font-bold uppercase tracking-widest hover:bg-custom-dark transition disabled:opacity-50">
                     {{ t('register') }}
                   </button>
