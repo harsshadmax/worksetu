@@ -26,7 +26,7 @@ function clearRefreshCookie(res: Response) {
   res.clearCookie(REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
 }
 
-const customerRegisterSchema = z.object({
+export const customerRegisterSchema = z.object({
   fullName: z.string().min(2).max(100),
   email: z.string().email(),
   phone: z.string().min(10).max(15),
@@ -46,7 +46,7 @@ export const registerCustomer = asyncHandler(async (req: Request, res: Response)
   return res.status(201).json({ userId: user.id, token: tokens.accessToken });
 });
 
-const workerRegisterSchema = z.object({
+export const workerRegisterSchema = z.object({
   fullName: z.string().min(2).max(100),
   email: z.string().email(),
   phone: z.string().min(10).max(15),
@@ -73,7 +73,7 @@ export const registerWorker = asyncHandler(async (req: Request, res: Response) =
   });
 });
 
-const loginSchema = z.object({
+export const loginSchema = z.object({
   identifier: z.string().min(3),
   password: z.string().min(1)
 });

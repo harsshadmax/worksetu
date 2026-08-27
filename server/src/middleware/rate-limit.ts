@@ -25,9 +25,23 @@ const locationPingLimiter = makeLimiter("rl:location-ping", 1, 5); // 1 / 5s per
 const walletRedeemLimiter = makeLimiter("rl:wallet-redeem", 5, 24 * 60 * 60); // 5 / day per worker
 const reviewLimiter = makeLimiter("rl:review", 30, 24 * 60 * 60); // 30 / day per customer (abuse ceiling; 1/booking is schema-enforced)
 
+const STORE_TIMEOUT_SYMBOL = Symbol("rate-limiter-store-timeout");
+
+// Phase-13 finding: RateLimiterRedis.consume() sits on top of ioredis,
+// which by default queues and retries a command against an unreachable
+// Redis for up to ~40s (maxRetriesPerRequest, with backoff) before it
+// finally rejects. The catch block below was always correct about
+// degrading to fail-open on a genuine store error — but without a bound
+// on how long that takes, every request behind a rate limiter (which is
+// nearly every route) hangs for tens of seconds during a real Redis
+// outage instead of failing open promptly, which is a de facto full
+// outage of the API, not the graceful degrade Section 3.3 rule 1 calls
+// for.
 function consumeOrReject(limiter: RateLimiterRedis, key: string, res: Response, next: NextFunction) {
-  limiter
-    .consume(key)
+  Promise.race([
+    limiter.consume(key),
+    new Promise((_, reject) => setTimeout(() => reject(STORE_TIMEOUT_SYMBOL), 1000))
+  ])
     .then(() => next())
     .catch((rej: unknown) => {
       if (rej instanceof RateLimiterRes) {
@@ -35,10 +49,12 @@ function consumeOrReject(limiter: RateLimiterRedis, key: string, res: Response, 
         return next(new AppError(429, "RATE_LIMITED", "Too many requests, please try again later"));
       }
       // Section 3.3 rule 1 — Redis is coordination/cache, not the source
-      // of truth; a genuine Redis-connectivity error degrades to
-      // fail-open (request proceeds unlimited) rather than blocking all
-      // traffic, which a protective-but-optional layer must never do.
-      log({ level: "error", message: `Rate limiter store error: ${rej instanceof Error ? rej.message : String(rej)}` });
+      // of truth; a genuine Redis-connectivity error (or one too slow to
+      // answer within the race above) degrades to fail-open (request
+      // proceeds unlimited) rather than blocking all traffic, which a
+      // protective-but-optional layer must never do.
+      const message = rej === STORE_TIMEOUT_SYMBOL ? "Rate limiter store timed out" : `Rate limiter store error: ${rej instanceof Error ? rej.message : String(rej)}`;
+      log({ level: "error", message });
       next();
     });
 }

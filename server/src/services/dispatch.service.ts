@@ -4,6 +4,26 @@ import { redis } from "../lib/redis-lock";
 import { scoreCandidateWorkers } from "./continuity-scoring.service";
 import { io } from "../lib/socket";
 import { transitionBookingStatus } from "./booking-state-machine.service";
+import { log } from "../lib/logger";
+
+// Phase-13 finding: an async setTimeout/setInterval callback that throws
+// (e.g. a transient DB blip — this environment's Supabase pooler is known
+// to drop connections intermittently) becomes an unhandled promise
+// rejection with no global handler anywhere in the app, which crashes the
+// entire Node process by default. These timers fire on every single
+// dispatch offer (every booking, every candidate, every 45s/120s
+// timeout), so this was a live, repeatedly-triggered crash risk, not a
+// theoretical one — confirmed by the integration test server going down
+// mid-suite and never coming back. Every async timer callback in this
+// file is wrapped so a transient failure is logged, not fatal.
+function safeAsyncTimer(fn: () => Promise<void>, context: string, onError?: () => void): () => void {
+  return () => {
+    fn().catch((err) => {
+      log({ level: "error", message: `Unhandled error in ${context}: ${err instanceof Error ? err.message : String(err)}` });
+      onError?.();
+    });
+  };
+}
 
 const MAX_SEARCH_RADIUS_KM = 15;
 
@@ -135,26 +155,40 @@ async function runBroadcastOfferPool(
   });
 
   await new Promise<void>((resolve) => {
-    const pollInterval = setInterval(async () => {
-      const current = await prisma.booking.findUnique({ where: { id: bookingId } });
-      if (!current || current.status !== "DISPATCHING_POOL") {
-        clearInterval(pollInterval);
-        resolve();
-      }
-    }, 2000);
-    setTimeout(async () => {
-      clearInterval(pollInterval);
-      const current = await prisma.booking.findUnique({ where: { id: bookingId } });
-      if (current && current.status === "DISPATCHING_POOL") {
-        await prisma.dispatchLog.updateMany({
-          where: { id: { in: dispatchLogs.map((d) => d.id) }, outcome: "OFFERED" },
-          data: { outcome: "TIMEOUT", respondedAt: new Date() }
-        });
-        await transitionBookingStatus(bookingId, "CANCELLED");
-        io.to(`booking:${bookingId}`).emit("dispatch:exhausted", { bookingId });
-      }
-      resolve();
-    }, timeoutSeconds * 1000);
+    const pollInterval = setInterval(
+      safeAsyncTimer(async () => {
+        const current = await prisma.booking.findUnique({ where: { id: bookingId } });
+        if (!current || current.status !== "DISPATCHING_POOL") {
+          clearInterval(pollInterval);
+          resolve();
+        }
+      }, "runBroadcastOfferPool poll"),
+      2000
+    );
+    setTimeout(
+      safeAsyncTimer(
+        async () => {
+          clearInterval(pollInterval);
+          const current = await prisma.booking.findUnique({ where: { id: bookingId } });
+          if (current && current.status === "DISPATCHING_POOL") {
+            await prisma.dispatchLog.updateMany({
+              where: { id: { in: dispatchLogs.map((d) => d.id) }, outcome: "OFFERED" },
+              data: { outcome: "TIMEOUT", respondedAt: new Date() }
+            });
+            await transitionBookingStatus(bookingId, "CANCELLED");
+            io.to(`booking:${bookingId}`).emit("dispatch:exhausted", { bookingId });
+          }
+          resolve();
+        },
+        "runBroadcastOfferPool timeout",
+        // This is the terminal fallback for the whole wait — if it
+        // itself throws (e.g. a transient DB blip mid-write), the
+        // awaiting caller must still be unblocked rather than hang
+        // forever waiting on a promise nothing will ever resolve.
+        resolve
+      ),
+      timeoutSeconds * 1000
+    );
   });
 }
 
@@ -164,11 +198,20 @@ function waitForResponseOrTimeout(dispatchLogId: string, timeoutSeconds: number)
     const subscriber = redis.duplicate();
     let settled = false;
 
+    // Self-protecting: every caller below fires this without awaiting it
+    // (a pub/sub message handler, a timer callback), so it must never
+    // throw — resolve() is this whole promise's only way out, and a
+    // transient Redis error unsubscribing/disconnecting must not prevent
+    // it from firing.
     const finish = async (outcome: "ACCEPTED" | "DECLINED" | "TIMEOUT") => {
       if (settled) return;
       settled = true;
-      await subscriber.unsubscribe(channel);
-      subscriber.disconnect();
+      try {
+        await subscriber.unsubscribe(channel);
+        subscriber.disconnect();
+      } catch (err) {
+        log({ level: "error", message: `dispatch subscriber cleanup failed: ${err instanceof Error ? err.message : String(err)}` });
+      }
       resolve(outcome);
     };
 
@@ -178,13 +221,20 @@ function waitForResponseOrTimeout(dispatchLogId: string, timeoutSeconds: number)
       });
     });
 
-    setTimeout(async () => {
-      await prisma.dispatchLog.updateMany({
-        where: { id: dispatchLogId, outcome: "OFFERED" },
-        data: { outcome: "TIMEOUT", respondedAt: new Date() }
-      });
-      finish("TIMEOUT");
-    }, timeoutSeconds * 1000);
+    setTimeout(
+      safeAsyncTimer(
+        async () => {
+          await prisma.dispatchLog.updateMany({
+            where: { id: dispatchLogId, outcome: "OFFERED" },
+            data: { outcome: "TIMEOUT", respondedAt: new Date() }
+          });
+          finish("TIMEOUT");
+        },
+        "waitForResponseOrTimeout",
+        () => finish("TIMEOUT")
+      ),
+      timeoutSeconds * 1000
+    );
   });
 }
 

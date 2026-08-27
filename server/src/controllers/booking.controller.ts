@@ -10,7 +10,7 @@ import { dispatchNotification } from "../services/notification-dispatcher.servic
 import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
 import { paginationQuerySchema, paginate } from "../utils/pagination";
 
-const requestBookingSchema = z.object({
+export const requestBookingSchema = z.object({
   serviceCategoryId: z.string().min(1),
   location: z.object({
     address: z.string().min(5).max(200),

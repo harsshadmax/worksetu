@@ -2,7 +2,7 @@
 import { BookingStatus, Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 
-const LEGAL_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
+export const LEGAL_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
   REQUESTED: ["DISPATCHING_TOP3", "CANCELLED"],
   DISPATCHING_TOP3: ["ASSIGNED", "DISPATCHING_POOL", "CANCELLED"],
   DISPATCHING_POOL: ["ASSIGNED", "CANCELLED"],

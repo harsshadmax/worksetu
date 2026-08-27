@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { AuthenticatedRequest } from "../middleware/auth";
 import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
+import { deriveRedeemableBalance, derivePendingBalance } from "../utils/wallet-balance";
 
 export const getWallet = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const worker = await prisma.workerProfile.findUniqueOrThrow({ where: { userId: req.user!.id } });
@@ -21,12 +22,8 @@ export const getWallet = asyncHandler(async (req: AuthenticatedRequest, res: Res
     },
     select: { type: true, amount: true, status: true }
   });
-  const availableBalance = balanceRows
-    .filter((t) => t.status === "COMPLETED")
-    .reduce((sum, t) => sum + (t.type === "REDEMPTION" ? -Number(t.amount) : Number(t.amount)), 0);
-  const pendingBalance = balanceRows
-    .filter((t) => t.status === "PROCESSING" && t.type === "REDEMPTION")
-    .reduce((sum, t) => sum + Number(t.amount), 0);
+  const availableBalance = deriveRedeemableBalance(balanceRows.map((t) => ({ ...t, amount: Number(t.amount) })));
+  const pendingBalance = derivePendingBalance(balanceRows.map((t) => ({ ...t, amount: Number(t.amount) })));
 
   const transactions = await prisma.creditTransaction.findMany({
     where: { workerProfileId: worker.id },
@@ -63,10 +60,17 @@ export const redeemWallet = asyncHandler(async (req: AuthenticatedRequest, res: 
     // requests against the same worker's ledger.
     await tx.$queryRaw`SELECT id FROM worker_profiles WHERE id = ${worker.id} FOR UPDATE`;
 
-    const completed = await tx.creditTransaction.findMany({
-      where: { workerProfileId: worker.id, status: "COMPLETED" }
+    // Include already-PROCESSING redemptions, not just COMPLETED rows —
+    // otherwise this check never sees money already committed to an
+    // in-flight redemption, and the same COMPLETED balance can be
+    // redeemed more than once before any prior redemption settles.
+    const relevant = await tx.creditTransaction.findMany({
+      where: {
+        workerProfileId: worker.id,
+        OR: [{ status: "COMPLETED" }, { status: "PROCESSING", type: "REDEMPTION" }]
+      }
     });
-    const balance = completed.reduce((sum, t) => sum + (t.type === "REDEMPTION" ? -Number(t.amount) : Number(t.amount)), 0);
+    const balance = deriveRedeemableBalance(relevant.map((t) => ({ ...t, amount: Number(t.amount) })));
 
     if (parsed.data.amount > balance) {
       throw new AppError(409, "INSUFFICIENT_BALANCE", "Insufficient redeemable balance");

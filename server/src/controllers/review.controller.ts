@@ -8,7 +8,7 @@ import { transitionBookingStatus } from "../services/booking-state-machine.servi
 import { dispatchNotification } from "../services/notification-dispatcher.service";
 import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
 
-const reviewSchema = z.object({
+export const reviewSchema = z.object({
   punctuality: z.number().int().min(1).max(5),
   quality: z.number().int().min(1).max(5),
   professionalism: z.number().int().min(1).max(5),

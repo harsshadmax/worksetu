@@ -18,6 +18,7 @@ import adminPaymentRoutes from "./routes/admin-payment.routes";
 import adminRoutes from "./routes/admin.routes";
 import documentRoutes from "./routes/document.routes";
 import documentSignedRoutes from "./routes/document-signed.routes";
+import healthRoutes from "./routes/health.routes";
 import { requestId } from "./middleware/request-id";
 import { requestLogger } from "./middleware/request-logger";
 import { errorHandler, notFoundHandler } from "./utils/app-error";
@@ -47,6 +48,8 @@ app.use(cors({ origin: allowedOrigins, credentials: true }));
 
 app.use(express.json({ limit: "1mb" })); // Section 8.4
 app.use(cookieParser());
+
+app.use(healthRoutes);
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/workers", workerRoutes);

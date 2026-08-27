@@ -28,3 +28,7 @@ Thumbs.db
 
 # Test coverage
 coverage/
+
+# Playwright E2E run output (screenshots, traces, HTML report)
+server/test-results/
+server/playwright-report/

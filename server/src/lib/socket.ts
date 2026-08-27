@@ -1,6 +1,7 @@
 import { Server as SocketIOServer, Socket } from "socket.io";
 import { verifyAccessToken, Role } from "./jwt";
 import { prisma } from "./prisma";
+import { log } from "./logger";
 
 // Standalone instance, attached to the HTTP server in app.ts.
 export const io = new SocketIOServer({
@@ -54,7 +55,13 @@ io.use(async (socket, next) => {
 // not a fixed connect-time snapshot). Snapshot joins below cover bookings
 // that already exist at connect time.
 io.on("connection", (socket: Socket) => {
-  void handleConnection(socket);
+  // Phase-13 finding: an unhandled rejection here (e.g. a transient DB
+  // blip in one of handleConnection's several awaits) has no global
+  // handler anywhere in the app and crashes the whole process — on every
+  // single socket connection, not just this room-snapshot join.
+  handleConnection(socket).catch((err) => {
+    log({ level: "error", message: `Socket connection handler failed: ${err instanceof Error ? err.message : String(err)}` });
+  });
 });
 
 async function handleConnection(socket: Socket): Promise<void> {

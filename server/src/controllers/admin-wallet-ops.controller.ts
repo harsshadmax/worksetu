@@ -7,6 +7,7 @@ import { prisma } from "../lib/prisma";
 import { AuthenticatedRequest } from "../middleware/auth";
 import { writeAuditLog } from "../lib/audit";
 import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
+import { deriveRedeemableBalance } from "../utils/wallet-balance";
 
 const adjustmentSchema = z.object({
   workerProfileId: z.string().min(1),
@@ -43,8 +44,17 @@ export const createWalletAdjustment = asyncHandler(async (req: AuthenticatedRequ
       // redemption; an admin cannot force a negative ledger any more than
       // a worker can."
       await tx.$queryRaw`SELECT id FROM worker_profiles WHERE id = ${worker.id} FOR UPDATE`;
-      const completed = await tx.creditTransaction.findMany({ where: { workerProfileId: worker.id, status: "COMPLETED" } });
-      const balance = completed.reduce((sum, t) => sum + (t.type === "REDEMPTION" ? -Number(t.amount) : Number(t.amount)), 0);
+      // Same fix as redeemWallet (wallet.controller.ts): must also count
+      // already-PROCESSING redemptions, or an admin debit (or a
+      // concurrent worker redemption) can be approved against balance
+      // that's already committed to an unsettled redemption.
+      const relevant = await tx.creditTransaction.findMany({
+        where: {
+          workerProfileId: worker.id,
+          OR: [{ status: "COMPLETED" }, { status: "PROCESSING", type: "REDEMPTION" }]
+        }
+      });
+      const balance = deriveRedeemableBalance(relevant.map((t) => ({ ...t, amount: Number(t.amount) })));
       if (amount > balance) {
         throw new AppError(409, "INSUFFICIENT_BALANCE", "Debit exceeds the worker's current balance");
       }

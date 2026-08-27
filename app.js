@@ -1028,7 +1028,17 @@ const app = createApp({
       if (role === "landing") {
         setupLandingStatsObserver();
       } else if (role === "customer" && loggedInCustomer.value) {
-        await loadCustomerBookings();
+        // activeBookingId restores from localStorage on its own (the ref's
+        // initializer reads it directly), but activeBooking — the detail
+        // object gating the Track Request banner (index.html "v-if=
+        // activeBooking") — does not: without this, a customer who reloads
+        // mid-booking loses the banner and tracking button entirely even
+        // though they still have an active booking, confirmed live via a
+        // Playwright E2E run (Section 1.1.5's own "REST poll-fallback"
+        // resync never actually ran on reload for the customer role, only
+        // on explicit navigation). Mirrors the worker branch below, which
+        // already restores its own active-job state on reload.
+        await Promise.all([loadCustomerBookings(), refreshActiveBooking()]);
       } else if (role === "worker" && loggedInWorker.value) {
         await Promise.all([loadWorkerIncoming(), loadWorkerActiveJob()]);
         if (loggedInWorker.value.workerProfile.availabilityStatus === "AVAILABLE") startLocationPinging();
