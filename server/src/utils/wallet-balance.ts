@@ -38,3 +38,12 @@ export function derivePendingBalance(transactions: BalanceTransaction[]): number
 export function deriveRedeemableBalance(transactions: BalanceTransaction[]): number {
   return deriveAvailableBalance(transactions) - derivePendingBalance(transactions);
 }
+
+// Dividend payouts are a distinct, cooperative-funded credit line (not
+// earned from a specific job) — reported separately from availableBalance
+// on the worker dashboard rather than folded into it silently.
+export function deriveDividendTotal(transactions: BalanceTransaction[]): number {
+  return transactions
+    .filter((t) => t.status === "COMPLETED" && t.type === "DIVIDEND_PAYOUT")
+    .reduce((sum, t) => sum + Number(t.amount), 0);
+}

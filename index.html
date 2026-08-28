@@ -8,9 +8,11 @@
   <!-- FontAwesome CDN for Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   
-  <!-- Noto Sans & Inter Fonts for Multi-Language Support (English, Hindi, Tamil) -->
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+Devanagari:wght@400;600;700&family=Noto+Sans+Tamil:wght@400;600;700&display=swap" rel="stylesheet">
-  
+  <!-- Noto Sans & Inter Fonts for Multi-Language Support (English, Hindi, Tamil), JetBrains Mono
+       for eyebrow/caption labels (figmaSans/figmaMono substitutes per DESIGN-figma.md's own
+       documented "Note on Font Substitutes") -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300..800;1,300..800&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Devanagari:wght@400;600;700&family=Noto+Sans+Tamil:wght@400;600;700&display=swap" rel="stylesheet">
+
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -20,6 +22,7 @@
         extend: {
           fontFamily: {
             sans: ['Inter', 'Noto Sans Devanagari', 'Noto Sans Tamil', 'sans-serif'],
+            mono: ['JetBrains Mono', 'SF Mono', 'menlo', 'monospace'],
           }
         }
       }
@@ -27,64 +30,104 @@
   </script>
   
   <!-- Custom Color Scheme Styles based on CSS Variables -->
+  <script>
+    // Design tokens from DESIGN-figma.md, applied as inline custom properties on
+    // <html> rather than a :root/.class stylesheet rule. Confirmed live in this
+    // environment that a plain CSS rule defining these custom properties gets
+    // silently dropped from the parsed stylesheet (reproduced across :root,
+    // html.light, .light, and even an unrelated control selector name — content-
+    // and name-independent, so not a syntax issue in the rule itself) while every
+    // OTHER rule in the same stylesheet parses fine; root cause not identified,
+    // but inline-style application via the CSSOM API was verified to work
+    // reliably, so that's the delivery mechanism here instead. Re-applies on every
+    // light/dark class toggle so the existing theme switcher keeps working.
+    (function () {
+      var LIGHT = {
+        '--primary-blue': '#000000', '--dark-blue': '#000000', '--light-blue': '#f7f7f5',
+        '--very-light-blue': '#f7f7f5', '--white': '#ffffff', '--main-text': '#000000',
+        '--secondary-text': '#4a4a4a', '--border': '#e6e6e6', '--bg': '#ffffff',
+        '--card-bg': '#ffffff', '--hairline-soft': '#f1f1f1', '--surface-soft': '#f7f7f5',
+        '--block-lime': '#dceeb1', '--block-lilac': '#c5b0f4', '--block-cream': '#f4ecd6',
+        '--block-pink': '#efd4d4', '--block-mint': '#c8e6cd', '--block-coral': '#f3c9b6',
+        '--block-navy': '#1f1d3d', '--accent-magenta': '#ff3d8b', '--semantic-success': '#1ea64a'
+      };
+      var DARK = Object.assign({}, LIGHT, {
+        '--primary-blue': '#ffffff', '--dark-blue': '#ffffff', '--light-blue': '#232132',
+        '--very-light-blue': '#18172a', '--white': '#000000', '--main-text': '#ffffff',
+        '--secondary-text': '#b3b3b3', '--border': '#2d2d2c', '--bg': '#0b0b0a',
+        '--card-bg': '#1f1d3d', '--hairline-soft': '#232323', '--surface-soft': '#18172a'
+      });
+      var root = document.documentElement;
+      function applyThemeVars() {
+        var vars = root.classList.contains('dark') ? DARK : LIGHT;
+        for (var k in vars) root.style.setProperty(k, vars[k]);
+      }
+      applyThemeVars();
+      new MutationObserver(applyThemeVars).observe(root, { attributes: true, attributeFilter: ['class'] });
+    })();
+  </script>
   <style>
-    :root {
-      --primary-blue: #1565C0;
-      --dark-blue: #0A3D7A;
-      --light-blue: #ECECE9;
-      --very-light-blue: #F7F7F5;
-      --white: #FFFFFF;
-      --main-text: #111111;
-      --secondary-text: #666666;
-      --border: #E2E2DF;
-      --bg: #FFFFFF;
-      --card-bg: #FFFFFF;
-    }
-
-    .dark {
-      --primary-blue: #60A5FA;
-      --dark-blue: #2563EB;
-      --light-blue: #1C1C1B;
-      --very-light-blue: #131312;
-      --white: #1A1A19;
-      --main-text: #F2F2EF;
-      --secondary-text: #999995;
-      --border: #2D2D2C;
-      --bg: #0B0B0A;
-      --card-bg: #1A1A19;
-    }
-
     body {
-      background-color: var(--bg);
-      color: var(--main-text);
+      background-color: var(--bg) !important;
+      color: var(--main-text) !important;
       font-family: 'Inter', 'Noto Sans Devanagari', 'Noto Sans Tamil', sans-serif;
-      letter-spacing: -0.01em;
+      font-weight: 320;
       transition: background-color 0.2s, color 0.2s;
     }
 
-    /* Editorial Overrides for Tailwind classes to create clean, architectural layout */
-    .rounded-3xl, .rounded-2xl, .rounded-xl, .rounded-lg, .rounded-md {
-      border-radius: 1px !important; /* Premium sharp/slightly square architectural look */
+    /* Fix: markup hardcodes text-white on bg-custom-primary/bg-custom-dark
+       buttons. --primary-blue is now white in dark mode (monochrome invert),
+       which made that literal white text invisible. --bg is always the
+       correct inverse of --primary-blue in both themes by this system's
+       design, so it doubles as the "on-primary" text color here. */
+    .bg-custom-primary.text-white, .bg-custom-dark.text-white {
+      color: var(--bg) !important;
     }
-    .rounded-full {
+
+    /* Radius scale from design.md's `rounded:` tokens, replacing Tailwind's
+       defaults for the classes already used throughout the markup. */
+    .rounded-sm { border-radius: 6px !important; }
+    .rounded-md { border-radius: 8px !important; }
+    .rounded-lg, .rounded-2xl, .rounded-3xl { border-radius: 24px !important; }
+    .rounded-xl { border-radius: 16px !important; }
+    .rounded-full { border-radius: 9999px !important; }
+
+    /* button-primary / button-primary-pressed: the app's brand CTA color
+       is always a pill regardless of whatever rounded-* class it carries.
+       Hover/press communicated by micro-scale, per spec, not a fill change. */
+    .bg-custom-primary, .bg-custom-dark {
       border-radius: 9999px !important;
+      transition: transform 0.12s ease, opacity 0.12s ease;
     }
+    button.bg-custom-primary:hover, button.bg-custom-dark:hover,
+    a.bg-custom-primary:hover, a.bg-custom-dark:hover {
+      transform: scale(1.03);
+    }
+    button.bg-custom-primary:active, button.bg-custom-dark:active,
+    a.bg-custom-primary:active, a.bg-custom-dark:active {
+      transform: scale(0.97);
+    }
+
     .shadow-sm, .shadow, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl {
       box-shadow: none !important;
       border: 1px solid var(--border) !important;
     }
-    
-    /* Clean inputs styling */
+
+    /* text-input / text-input-focused */
     input, textarea, select {
-      border-radius: 1px !important;
+      border-radius: 8px !important;
       border: 1px solid var(--border) !important;
       background-color: var(--bg) !important;
       color: var(--main-text) !important;
       padding: 0.75rem 1rem !important;
     }
     input:focus, textarea:focus, select:focus {
-      border-color: var(--primary-blue) !important;
+      border-color: var(--border) !important;
       outline: none !important;
+      box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.12) !important; /* focus = ring, not fill change, per spec */
+    }
+    .dark input:focus, .dark textarea:focus, .dark select:focus {
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.18) !important;
     }
 
     /* Color scheme backgrounds & texts mapping */
@@ -93,22 +136,61 @@
     .text-custom-main { color: var(--main-text); }
     .text-custom-sec { color: var(--secondary-text); }
     .border-custom-border { border-color: var(--border); }
-    
+
     .bg-custom-primary { background-color: var(--primary-blue); }
     .text-custom-primary { color: var(--primary-blue); }
     .bg-custom-dark { background-color: var(--dark-blue); }
     .text-custom-dark { color: var(--dark-blue); }
     .bg-custom-light-blue { background-color: var(--light-blue); }
     .bg-custom-very-light-blue { background-color: var(--very-light-blue); }
-    
+
     .hover-custom-light-blue:hover { background-color: var(--light-blue); }
+
+    /* Signature color-block sections (design.md's defining surface). Text
+       inside is hard-coded to ink/inverse-ink since these pastel panels
+       don't invert with light/dark mode (design.md documents no dark
+       theme; the blocks are a deliberate constant "poster" surface). */
+    .block-lime, .block-lilac, .block-cream, .block-pink, .block-mint, .block-coral, .block-navy {
+      border-radius: 24px;
+      padding: 48px;
+      box-shadow: none;
+    }
+    .block-lime { background-color: var(--block-lime); color: #000000; }
+    .block-lilac { background-color: var(--block-lilac); color: #000000; }
+    .block-cream { background-color: var(--block-cream); color: #000000; }
+    .block-pink { background-color: var(--block-pink); color: #000000; }
+    .block-mint { background-color: var(--block-mint); color: #000000; }
+    .block-coral { background-color: var(--block-coral); color: #000000; }
+    .block-navy { background-color: var(--block-navy); color: #ffffff; }
+    @media (max-width: 768px) {
+      .block-lime, .block-lilac, .block-cream, .block-pink, .block-mint, .block-coral, .block-navy {
+        border-radius: 0;
+        padding: 32px 24px;
+        margin-left: calc(-1 * env(safe-area-inset-left, 0px));
+      }
+    }
+
+    /* Typography scale from design.md's `typography:` tokens. figmaSans ->
+       Inter, figmaMono -> JetBrains Mono (spec's own documented substitutes). */
+    .text-display-xl { font-family: 'Inter', sans-serif; font-size: 86px; font-weight: 340; line-height: 1.0; letter-spacing: -1.72px; }
+    .text-display-lg { font-family: 'Inter', sans-serif; font-size: 64px; font-weight: 340; line-height: 1.10; letter-spacing: -0.96px; }
+    .text-headline { font-family: 'Inter', sans-serif; font-size: 26px; font-weight: 540; line-height: 1.35; letter-spacing: -0.26px; }
+    .text-subhead { font-family: 'Inter', sans-serif; font-size: 26px; font-weight: 340; line-height: 1.35; letter-spacing: -0.26px; }
+    .text-card-title { font-family: 'Inter', sans-serif; font-size: 24px; font-weight: 700; line-height: 1.45; }
+    .text-body-lg { font-family: 'Inter', sans-serif; font-size: 20px; font-weight: 330; line-height: 1.40; letter-spacing: -0.14px; }
+    .text-eyebrow { font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 400; line-height: 1.30; letter-spacing: 0.54px; text-transform: uppercase; }
+    .text-caption-mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 400; line-height: 1.0; letter-spacing: 0.60px; text-transform: uppercase; }
+    @media (max-width: 560px) {
+      .text-display-xl { font-size: 44px; letter-spacing: -0.9px; }
+      .text-display-lg { font-size: 36px; letter-spacing: -0.5px; }
+    }
 
     /* Custom geometric elements & typography helpers */
     .uppercase-track {
       text-transform: uppercase;
       letter-spacing: 0.15em;
     }
-    
+
     .editorial-divider {
       height: 1px;
       background-color: var(--border);
@@ -1535,6 +1617,25 @@
               </div>
             </div>
 
+            <!-- Dashboard Stat Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div class="bg-custom-card border border-custom-border p-6 shadow-sm">
+                <span class="text-[10px] uppercase-track font-black text-custom-sec block mb-2">{{ t('todaysEarningsLabel') }}</span>
+                <p class="text-2xl font-bold text-custom-main">{{ formatCurrency(walletInfo.todayEarnings) }}</p>
+                <a @click="navigateTo('earnings')" class="text-[10px] font-bold uppercase-track text-custom-primary hover:underline cursor-pointer mt-2 inline-block">{{ t('viewDetails') }} &rarr;</a>
+              </div>
+              <div class="bg-custom-card border border-custom-border p-6 shadow-sm">
+                <span class="text-[10px] uppercase-track font-black text-custom-sec block mb-2">{{ t('workingLocationLabel') }}</span>
+                <p class="text-lg font-bold text-custom-main flex items-center gap-1.5"><i class="fa-solid fa-location-dot text-custom-primary text-sm"></i>{{ walletInfo.workingLocation }}</p>
+                <p class="text-[10px] text-custom-sec mt-2">{{ t('activeRadiusLabel') }}: {{ walletInfo.serviceAreaRadiusKm }} km</p>
+              </div>
+              <div class="bg-custom-card border border-custom-border p-6 shadow-sm">
+                <span class="text-[10px] uppercase-track font-black text-custom-sec block mb-2">{{ t('cooperativeDividendsLabel') }}</span>
+                <p class="text-lg font-bold text-custom-main">{{ walletInfo.dividendSharePercent }}% {{ t('shareRetainedLabel') }}</p>
+                <p class="text-[10px] text-green-600 font-bold mt-2">{{ t('dividendPayoutLabel') }}: {{ formatCurrency(walletInfo.dividendPayoutTotal) }}</p>
+              </div>
+            </div>
+
             <!-- Active Work Assignment -->
             <div v-if="workerActiveJob" class="bg-custom-card border border-custom-border p-8 space-y-6 shadow-sm">
               <span class="text-xs uppercase-track font-black text-custom-primary block mb-2">{{ t('activeJobTitle') }}</span>
@@ -1552,7 +1653,9 @@
                 </div>
               </div>
 
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-custom-sec font-semibold bg-custom-very-light-blue p-4 border border-custom-border">
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs text-custom-sec font-semibold bg-custom-very-light-blue p-4 border border-custom-border">
+                <div v-if="workerActiveJob.distanceKm !== null">{{ t('distanceLabel') }}:<br><span class="text-custom-main font-bold">{{ workerActiveJob.distanceKm }} km</span></div>
+                <div v-if="workerActiveJob.estTravelMinutes !== null">{{ t('estTravelLabel') }}:<br><span class="text-custom-main font-bold">{{ workerActiveJob.estTravelMinutes }} {{ t('estTravelMinutesUnit') }}</span></div>
                 <div>{{ t('estPayment') }}:<br><span class="text-custom-primary font-bold">{{ formatCurrency(workerActiveJob.estimatedTotal) }}</span></div>
                 <div>{{ t('statusLabel') }}:<br><span class="text-custom-main font-bold uppercase">{{ stageLabel(workerActiveJob.status) }}</span></div>
               </div>
@@ -1570,6 +1673,19 @@
                   class="py-3 px-6 bg-green-600 hover:bg-green-700 text-white text-xs font-bold uppercase-track transition">
                   {{ t('completeJobBtn') }}
                 </button>
+                <a
+                  v-if="workerActiveJob.location"
+                  :href="'https://www.google.com/maps/dir/?api=1&destination=' + workerActiveJob.location.lat + ',' + workerActiveJob.location.lng"
+                  target="_blank" rel="noopener noreferrer"
+                  class="py-3 px-6 border border-custom-border hover:bg-custom-very-light-blue text-custom-main text-xs font-bold uppercase-track transition text-center flex items-center justify-center gap-2">
+                  <i class="fa-solid fa-diamond-turn-right"></i>{{ t('navigateBtn') }}
+                </a>
+                <a
+                  v-if="workerActiveJob.customerPhone"
+                  :href="'tel:' + workerActiveJob.customerPhone"
+                  class="py-3 px-6 border border-custom-border hover:bg-custom-very-light-blue text-custom-main text-xs font-bold uppercase-track transition text-center flex items-center justify-center gap-2">
+                  <i class="fa-solid fa-phone"></i>{{ t('contactCustomerBtn') }}
+                </a>
               </div>
             </div>
 
@@ -1591,6 +1707,25 @@
                   <button @click="handleWorkerReject(job.dispatchLogId)" class="py-2.5 bg-red-600 text-white text-[10px] font-bold uppercase-track transition hover:bg-red-700">{{ t('btnReject') }}</button>
                 </div>
               </div>
+            </div>
+
+            <!-- Active Service Area Demand — real clusters of open, nearby
+                 requests from the same demand-heatmap data the Map & Demand
+                 page uses (GET /workers/me/demand-heatmap), not a rendered
+                 map (this app has no maps/routing integration). -->
+            <div class="border border-custom-border bg-custom-card p-6 space-y-4">
+              <span class="text-xs uppercase-track font-black text-custom-primary block">&mdash; {{ t('serviceAreaDemandTitle') }}</span>
+              <div v-if="demandHeatmap.length > 0" class="space-y-3">
+                <div v-for="cluster in demandHeatmap.slice(0, 4)" :key="cluster.cellId" class="flex items-center justify-between p-3 bg-custom-very-light-blue border border-custom-border">
+                  <div class="flex items-center gap-3">
+                    <span class="w-2.5 h-2.5 rounded-full" :class="cluster.avgUrgencyScore >= 1.5 ? 'bg-red-500' : 'bg-yellow-500'"></span>
+                    <span v-if="cluster.avgUrgencyScore >= 1.5" class="text-[10px] font-black uppercase-track text-red-600">{{ t('highDemandLabel') }}</span>
+                    <span class="text-xs font-semibold text-custom-main">{{ t('openRequestsNearby').replace('{count}', cluster.openRequests) }}</span>
+                  </div>
+                  <span class="text-[10px] text-custom-sec font-mono">{{ cluster.centroid.lat.toFixed(3) }}, {{ cluster.centroid.lng.toFixed(3) }}</span>
+                </div>
+              </div>
+              <p v-else class="text-xs text-custom-sec font-semibold">{{ t('noActiveDemand') }}</p>
             </div>
           </div>
 

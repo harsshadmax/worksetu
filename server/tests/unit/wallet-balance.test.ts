@@ -2,6 +2,7 @@ import {
   deriveAvailableBalance,
   derivePendingBalance,
   deriveRedeemableBalance,
+  deriveDividendTotal,
   effectiveContribution
 } from "../../src/utils/wallet-balance";
 
@@ -110,5 +111,38 @@ describe("deriveRedeemableBalance (Section 9 threat #13 fix)", () => {
   it("matches deriveAvailableBalance when there is no pending redemption", () => {
     const txns = [{ type: "EARNING", amount: 250, status: "COMPLETED" }];
     expect(deriveRedeemableBalance(txns)).toBe(deriveAvailableBalance(txns));
+  });
+});
+
+// Cooperative dividends (admin-wallet-ops.controller.ts#distributeDividends)
+// are a distinct credit line from job earnings, reported separately on the
+// worker dashboard rather than folded into availableBalance.
+describe("deriveDividendTotal", () => {
+  it("sums only COMPLETED DIVIDEND_PAYOUT rows", () => {
+    const txns = [
+      { type: "JOB_PAYOUT", amount: 500, status: "COMPLETED" },
+      { type: "DIVIDEND_PAYOUT", amount: 60, status: "COMPLETED" },
+      { type: "DIVIDEND_PAYOUT", amount: 40, status: "COMPLETED" }
+    ];
+    expect(deriveDividendTotal(txns)).toBe(100);
+  });
+
+  it("excludes a PROCESSING dividend payout (there's no such state today, but the filter should still be exact)", () => {
+    const txns = [{ type: "DIVIDEND_PAYOUT", amount: 100, status: "PROCESSING" }];
+    expect(deriveDividendTotal(txns)).toBe(0);
+  });
+
+  it("is zero for a worker with job earnings but no dividend history yet", () => {
+    const txns = [{ type: "JOB_PAYOUT", amount: 1000, status: "COMPLETED" }];
+    expect(deriveDividendTotal(txns)).toBe(0);
+  });
+
+  it("does not count dividend payouts toward deriveAvailableBalance separately -- it's already included there as a positive contribution, same as any other non-REDEMPTION type", () => {
+    const txns = [
+      { type: "JOB_PAYOUT", amount: 500, status: "COMPLETED" },
+      { type: "DIVIDEND_PAYOUT", amount: 60, status: "COMPLETED" }
+    ];
+    expect(deriveAvailableBalance(txns)).toBe(560);
+    expect(deriveDividendTotal(txns)).toBe(60);
   });
 });

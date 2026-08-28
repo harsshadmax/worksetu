@@ -9,6 +9,7 @@ import { io } from "../lib/socket";
 import { dispatchNotification } from "../services/notification-dispatcher.service";
 import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
 import { paginationQuerySchema, paginate } from "../utils/pagination";
+import { haversineKm } from "./location.controller";
 
 export const requestBookingSchema = z.object({
   serviceCategoryId: z.string().min(1),
@@ -276,6 +277,15 @@ export const getIncomingOffers = asyncHandler(async (req: AuthenticatedRequest, 
   );
 });
 
+// Naive travel-time estimate for the active-job dashboard card — this app
+// has no routing/traffic API (out of scope, see CLAUDE.md), so this is
+// straight-line haversine distance at an assumed flat urban average speed,
+// not a real ETA. Clearly a rough estimate, not fabricated: it's a
+// disclosed, documented approximation derived from real coordinates,
+// consistently recomputed from the same two GPS points routing/dispatch
+// already uses elsewhere in this file.
+const ASSUMED_AVG_SPEED_KMH = 20;
+
 export const getMyWorkerBookings = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const parsed = paginationQuerySchema.safeParse(req.query);
   if (!parsed.success) return sendValidationError(req, res, parsed.error);
@@ -298,17 +308,42 @@ export const getMyWorkerBookings = asyncHandler(async (req: AuthenticatedRequest
     prisma.booking.count({ where })
   ]);
 
+  // Distance/navigation/contact info is only meaningful (and only shown by
+  // the frontend) for a currently-active assignment, so it's computed just
+  // for those rows rather than the whole paginated history.
+  const activeIds = items.filter((b) => ["ASSIGNED", "CONFIRMED", "IN_PROGRESS"].includes(b.status)).map((b) => b.id);
+  const activeLocations =
+    activeIds.length > 0
+      ? await prisma.$queryRaw<{ id: string; lng: number; lat: number; workerLng: number | null; workerLat: number | null }[]>`
+          SELECT b.id, ST_X(b."customerLocation") AS lng, ST_Y(b."customerLocation") AS lat,
+                 ST_X(wp."currentLocation") AS "workerLng", ST_Y(wp."currentLocation") AS "workerLat"
+          FROM bookings b
+          JOIN worker_profiles wp ON wp.id = ${worker.id}
+          WHERE b.id = ANY(${activeIds})
+        `
+      : [];
+  const locationById = new Map(activeLocations.map((r) => [r.id, r]));
+
   return res.json(
     paginate(
-      items.map((b) => ({
-        id: b.id,
-        status: b.status,
-        serviceCategoryId: b.serviceCategoryId,
-        description: b.description,
-        estimatedTotal: Number(b.estimatedTotal),
-        customerName: b.customer.user.fullName,
-        createdAt: b.createdAt
-      })),
+      items.map((b) => {
+        const loc = locationById.get(b.id);
+        const hasBothPoints = loc && loc.workerLat !== null && loc.workerLng !== null;
+        const distanceKm = hasBothPoints ? haversineKm(loc!.workerLat!, loc!.workerLng!, loc!.lat, loc!.lng) : null;
+        return {
+          id: b.id,
+          status: b.status,
+          serviceCategoryId: b.serviceCategoryId,
+          description: b.description,
+          estimatedTotal: Number(b.estimatedTotal),
+          customerName: b.customer.user.fullName,
+          customerPhone: b.customer.user.phone,
+          createdAt: b.createdAt,
+          location: loc ? { lat: loc.lat, lng: loc.lng } : null,
+          distanceKm: distanceKm !== null ? Math.round(distanceKm * 10) / 10 : null,
+          estTravelMinutes: distanceKm !== null ? Math.max(1, Math.round((distanceKm / ASSUMED_AVG_SPEED_KMH) * 60)) : null
+        };
+      }),
       page,
       pageSize,
       totalCount

@@ -100,7 +100,16 @@ const app = createApp({
     const workerBookings = ref([]);
     const workerIncoming = ref([]); // GET /workers/me/incoming
     const workerActiveJob = ref(null); // full detail of current ASSIGNED/CONFIRMED/IN_PROGRESS booking
-    const walletInfo = ref({ availableBalance: 0, pendingBalance: 0, transactions: [] });
+    const walletInfo = ref({
+      availableBalance: 0,
+      pendingBalance: 0,
+      dividendPayoutTotal: 0,
+      dividendSharePercent: 0,
+      todayEarnings: 0,
+      workingLocation: "",
+      serviceAreaRadiusKm: 0,
+      transactions: []
+    });
     const incentivesList = ref([]);
     const welfareInfo = ref({ hoursWorkedToday: 0, hoursWorkedThisWeek: 0, consecutiveJobStreak: 0, restRecommended: false });
     const demandHeatmap = ref([]);
@@ -1034,7 +1043,12 @@ const app = createApp({
         // already restores its own active-job state on reload.
         await Promise.all([loadCustomerBookings(), refreshActiveBooking()]);
       } else if (role === "worker" && loggedInWorker.value) {
-        await Promise.all([loadWorkerIncoming(), loadWorkerActiveJob()]);
+        // loadWallet/loadDemandHeatmap already existed for the separate
+        // Earnings/Map & Demand pages (only triggered when navigating to
+        // them) -- also loading them here so the dashboard's own earnings/
+        // dividends/service-area-demand cards have real data immediately,
+        // without a second nav-triggered fetch.
+        await Promise.all([loadWorkerIncoming(), loadWorkerActiveJob(), loadWallet(), loadDemandHeatmap()]);
         if (loggedInWorker.value.workerProfile.availabilityStatus === "AVAILABLE") startLocationPinging();
       } else if (role === "admin" && loggedInAdmin.value) {
         setAdminTab("dashboard");

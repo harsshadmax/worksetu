@@ -135,3 +135,61 @@ export const reverseCreditTransaction = asyncHandler(async (req: AuthenticatedRe
 
   return res.json({ reversalId, reversesTransactionId: original.id });
 });
+
+// Cooperative profit-sharing: distribute each member worker's share of
+// completed job earnings since their last distribution (or all-time, for a
+// worker who's never received one) as a new DIVIDEND_PAYOUT credit, sized
+// by Cooperative.dividendSharePercent. Re-triggerable — running it again
+// only distributes earnings accrued *since* the last run per worker, so
+// it's safe to call repeatedly (e.g. on a monthly cadence) without double-
+// paying anyone. Workers with zero new earnings since their last payout
+// are skipped rather than given a $0 transaction row.
+export const distributeDividends = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const cooperative = await prisma.cooperative.findUnique({ where: { id: req.params.id } });
+  if (!cooperative) {
+    throw new AppError(404, "COOPERATIVE_NOT_FOUND", "Cooperative not found");
+  }
+
+  const workers = await prisma.workerProfile.findMany({ where: { cooperativeId: cooperative.id }, select: { id: true } });
+
+  const distributed = await prisma.$transaction(async (tx) => {
+    const results: { workerProfileId: string; amount: number }[] = [];
+    for (const worker of workers) {
+      const lastPayout = await tx.creditTransaction.findFirst({
+        where: { workerProfileId: worker.id, type: "DIVIDEND_PAYOUT" },
+        orderBy: { createdAt: "desc" },
+        select: { createdAt: true }
+      });
+      const earningsSinceLastPayout = await tx.creditTransaction.aggregate({
+        where: {
+          workerProfileId: worker.id,
+          type: "JOB_PAYOUT",
+          status: "COMPLETED",
+          ...(lastPayout ? { createdAt: { gt: lastPayout.createdAt } } : {})
+        },
+        _sum: { amount: true }
+      });
+      const eligibleEarnings = Number(earningsSinceLastPayout._sum.amount ?? 0);
+      if (eligibleEarnings <= 0) continue;
+
+      const amount = Math.round(eligibleEarnings * (cooperative.dividendSharePercent / 100) * 100) / 100;
+      if (amount <= 0) continue;
+
+      const created = await tx.creditTransaction.create({
+        data: { workerProfileId: worker.id, type: "DIVIDEND_PAYOUT", amount, status: "COMPLETED", settledAt: new Date() }
+      });
+      results.push({ workerProfileId: worker.id, amount: Number(created.amount) });
+    }
+
+    await writeAuditLog(tx, {
+      actorId: req.user!.id,
+      action: "DIVIDENDS_DISTRIBUTED",
+      entityType: "Cooperative",
+      entityId: cooperative.id,
+      metadata: { dividendSharePercent: cooperative.dividendSharePercent, workerCount: results.length }
+    });
+    return results;
+  });
+
+  return res.json({ cooperativeId: cooperative.id, dividendSharePercent: cooperative.dividendSharePercent, distributed });
+});

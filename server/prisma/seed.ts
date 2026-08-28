@@ -127,10 +127,10 @@ async function main() {
 
   console.log("Cooperatives...");
   const cooperativeData = [
-    { id: "coop-1", name: "Chennai Skilled Workers Cooperative", location: "Chennai", registrationNumber: "TN/COOP/2018/0114", members: 340, founded: 2018 },
-    { id: "coop-2", name: "Delhi Household & Labor Union", location: "Delhi", registrationNumber: "DL/COOP/2015/0089", members: 520, founded: 2015 },
-    { id: "coop-3", name: "Mumbai Community & Caregivers Society", location: "Mumbai", registrationNumber: "MH/COOP/2020/0231", members: 280, founded: 2020 },
-    { id: "coop-4", name: "Bangalore Technicians Cooperative Board", location: "Bangalore", registrationNumber: "KA/COOP/2017/0176", members: 410, founded: 2017 }
+    { id: "coop-1", name: "Chennai Skilled Workers Cooperative", location: "Chennai", registrationNumber: "TN/COOP/2018/0114", members: 340, founded: 2018, dividendSharePercent: 12 },
+    { id: "coop-2", name: "Delhi Household & Labor Union", location: "Delhi", registrationNumber: "DL/COOP/2015/0089", members: 520, founded: 2015, dividendSharePercent: 10 },
+    { id: "coop-3", name: "Mumbai Community & Caregivers Society", location: "Mumbai", registrationNumber: "MH/COOP/2020/0231", members: 280, founded: 2020, dividendSharePercent: 15 },
+    { id: "coop-4", name: "Bangalore Technicians Cooperative Board", location: "Bangalore", registrationNumber: "KA/COOP/2017/0176", members: 410, founded: 2017, dividendSharePercent: 8 }
   ];
   for (const c of cooperativeData) {
     await prisma.cooperative.create({ data: c });
@@ -447,6 +447,36 @@ async function main() {
     await prisma.workerProfile.update({
       where: { id: workerProfileIdByMockId.get(mockId)! },
       data: { ratingAverage: Math.round(avg * 100) / 100, ratingCount: ratings.length }
+    });
+  }
+
+  // Cooperative dividends — same formula as
+  // admin-wallet-ops.controller.ts#distributeDividends (a worker's total
+  // completed JOB_PAYOUT earnings × their cooperative's
+  // dividendSharePercent), applied once here so the demo dashboard shows a
+  // real, traceable number rather than a hardcoded one. No worker has a
+  // prior DIVIDEND_PAYOUT yet, so this is "since all time" for every
+  // worker, matching what the real endpoint does for a first-ever run.
+  console.log("Cooperative dividends...");
+  for (const w of workerSeeds) {
+    const workerProfileId = workerProfileIdByMockId.get(w.mockId)!;
+    const earnings = await prisma.creditTransaction.aggregate({
+      where: { workerProfileId, type: "JOB_PAYOUT" as CreditTransactionType, status: "COMPLETED" as CreditTransactionStatus },
+      _sum: { amount: true }
+    });
+    const totalEarnings = Number(earnings._sum.amount ?? 0);
+    if (totalEarnings <= 0) continue;
+    const sharePercent = cooperativeData.find((c) => c.id === w.cooperativeId)!.dividendSharePercent;
+    const dividendAmount = Math.round(totalEarnings * (sharePercent / 100) * 100) / 100;
+    if (dividendAmount <= 0) continue;
+    await prisma.creditTransaction.create({
+      data: {
+        workerProfileId,
+        type: "DIVIDEND_PAYOUT" as CreditTransactionType,
+        amount: dividendAmount,
+        status: "COMPLETED" as CreditTransactionStatus,
+        settledAt: new Date()
+      }
     });
   }
 

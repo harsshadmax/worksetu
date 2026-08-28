@@ -67,6 +67,7 @@ router.patch("/config", requireSuperAdmin, config.updateConfig);
 // Section 15.5 / 15.7
 router.post("/wallet/adjustments", idempotent("POST /admin/wallet/adjustments"), walletOps.createWalletAdjustment);
 router.post("/credit-transactions/:id/reversal", walletOps.reverseCreditTransaction);
+router.post("/cooperatives/:id/distribute-dividends", walletOps.distributeDividends);
 
 // Section 15.8
 router.get("/audit-logs", audit.getAuditLogs);

@@ -4,10 +4,13 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { AuthenticatedRequest } from "../middleware/auth";
 import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
-import { deriveRedeemableBalance, derivePendingBalance } from "../utils/wallet-balance";
+import { deriveRedeemableBalance, derivePendingBalance, deriveDividendTotal } from "../utils/wallet-balance";
 
 export const getWallet = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const worker = await prisma.workerProfile.findUniqueOrThrow({ where: { userId: req.user!.id } });
+  const worker = await prisma.workerProfile.findUniqueOrThrow({
+    where: { userId: req.user!.id },
+    include: { cooperative: { select: { location: true, dividendSharePercent: true } } }
+  });
 
   // Fix, not a literal transcription: the illustrative Section 4.7 code
   // derives availableBalance/pendingBalance from the same `take: 50` list
@@ -20,10 +23,18 @@ export const getWallet = asyncHandler(async (req: AuthenticatedRequest, res: Res
       workerProfileId: worker.id,
       OR: [{ status: "COMPLETED" }, { status: "PROCESSING", type: "REDEMPTION" }]
     },
-    select: { type: true, amount: true, status: true }
+    select: { type: true, amount: true, status: true, createdAt: true }
   });
-  const availableBalance = deriveRedeemableBalance(balanceRows.map((t) => ({ ...t, amount: Number(t.amount) })));
-  const pendingBalance = derivePendingBalance(balanceRows.map((t) => ({ ...t, amount: Number(t.amount) })));
+  const normalizedRows = balanceRows.map((t) => ({ ...t, amount: Number(t.amount) }));
+  const availableBalance = deriveRedeemableBalance(normalizedRows);
+  const pendingBalance = derivePendingBalance(normalizedRows);
+  const dividendPayoutTotal = deriveDividendTotal(normalizedRows);
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayEarnings = normalizedRows
+    .filter((t) => t.status === "COMPLETED" && t.type === "JOB_PAYOUT" && t.createdAt >= todayStart)
+    .reduce((sum, t) => sum + t.amount, 0);
 
   const transactions = await prisma.creditTransaction.findMany({
     where: { workerProfileId: worker.id },
@@ -34,6 +45,11 @@ export const getWallet = asyncHandler(async (req: AuthenticatedRequest, res: Res
   return res.json({
     availableBalance,
     pendingBalance,
+    dividendPayoutTotal,
+    dividendSharePercent: worker.cooperative.dividendSharePercent,
+    todayEarnings,
+    workingLocation: worker.cooperative.location,
+    serviceAreaRadiusKm: worker.serviceAreaRadiusKm,
     transactions: transactions.map((t) => ({
       id: t.id,
       type: t.type,

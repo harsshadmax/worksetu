@@ -106,6 +106,9 @@ enum CreditTransactionType {
   ADJUSTMENT
   REFUND
   REVERSAL
+  /// Cooperative.dividendSharePercent applied to a worker's completed
+  /// JOB_PAYOUT earnings since their last distribution.
+  DIVIDEND_PAYOUT
 }
 
 enum SettlementStatus {
@@ -323,6 +326,11 @@ model Cooperative {
   registrationNumber String   @unique
   members            Int      @default(0)
   founded            Int
+  /// Percentage (0-100) of each member's completed job earnings retained
+  /// by the cooperative and periodically redistributed as a dividend —
+  /// see CreditTransactionType.DIVIDEND_PAYOUT and
+  /// admin.controller.ts#distributeDividends.
+  dividendSharePercent Int      @default(10)
   createdAt          DateTime @default(now())
 
   workers WorkerProfile[]
