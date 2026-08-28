@@ -151,42 +151,51 @@ export const distributeDividends = asyncHandler(async (req: AuthenticatedRequest
   }
 
   const workers = await prisma.workerProfile.findMany({ where: { cooperativeId: cooperative.id }, select: { id: true } });
+  const workerIds = workers.map((w) => w.id);
 
-  // Deliberately NOT one interactive $transaction wrapping this whole loop:
-  // confirmed live that a cooperative with enough workers pushes the
-  // cumulative round-trip time past Prisma's 5s default interactive-
-  // transaction timeout ("Transaction API error: Transaction not found"),
-  // especially given this environment's demonstrated variable DB latency.
-  // There's also no actual atomicity requirement across workers here --
-  // each worker's payout is independent, and this is an admin-triggered
-  // batch job with no concurrent writer racing an individual worker's
-  // create the way, say, a user-initiated redemption would.
+  // Confirmed live: this cooperative can have well over a hundred workers
+  // (all the E2E/manual testing this build has gone through registers real
+  // worker accounts), and the original version made 2-3 sequential DB
+  // round-trips *per worker* -- a genuine N+1 that first blew past
+  // Prisma's 5s interactive-transaction timeout wrapping it, and even
+  // after removing that wrapper, still took 60s+ end to end. Rewritten to
+  // a constant number of queries regardless of worker count: one query for
+  // every worker's last DIVIDEND_PAYOUT (if any), one for every worker's
+  // COMPLETED JOB_PAYOUT rows, eligibility computed in memory, then a
+  // single batched insert.
   const distributed: { workerProfileId: string; amount: number }[] = [];
-  for (const worker of workers) {
-    const lastPayout = await prisma.creditTransaction.findFirst({
-      where: { workerProfileId: worker.id, type: "DIVIDEND_PAYOUT" },
-      orderBy: { createdAt: "desc" },
-      select: { createdAt: true }
-    });
-    const earningsSinceLastPayout = await prisma.creditTransaction.aggregate({
-      where: {
-        workerProfileId: worker.id,
-        type: "JOB_PAYOUT",
-        status: "COMPLETED",
-        ...(lastPayout ? { createdAt: { gt: lastPayout.createdAt } } : {})
-      },
-      _sum: { amount: true }
-    });
-    const eligibleEarnings = Number(earningsSinceLastPayout._sum.amount ?? 0);
-    if (eligibleEarnings <= 0) continue;
+  if (workerIds.length > 0) {
+    const [lastPayouts, jobPayouts] = await Promise.all([
+      prisma.creditTransaction.groupBy({
+        by: ["workerProfileId"],
+        where: { workerProfileId: { in: workerIds }, type: "DIVIDEND_PAYOUT" },
+        _max: { createdAt: true }
+      }),
+      prisma.creditTransaction.findMany({
+        where: { workerProfileId: { in: workerIds }, type: "JOB_PAYOUT", status: "COMPLETED" },
+        select: { workerProfileId: true, amount: true, createdAt: true }
+      })
+    ]);
+    const lastPayoutByWorker = new Map(lastPayouts.map((p) => [p.workerProfileId, p._max.createdAt!]));
 
-    const amount = Math.round(eligibleEarnings * (cooperative.dividendSharePercent / 100) * 100) / 100;
-    if (amount <= 0) continue;
+    const rows: { workerProfileId: string; type: "DIVIDEND_PAYOUT"; amount: number; status: "COMPLETED"; settledAt: Date }[] = [];
+    const settledAt = new Date();
+    for (const workerId of workerIds) {
+      const cutoff = lastPayoutByWorker.get(workerId);
+      const eligibleEarnings = jobPayouts
+        .filter((p) => p.workerProfileId === workerId && (!cutoff || p.createdAt > cutoff))
+        .reduce((sum, p) => sum + Number(p.amount), 0);
+      if (eligibleEarnings <= 0) continue;
 
-    const created = await prisma.creditTransaction.create({
-      data: { workerProfileId: worker.id, type: "DIVIDEND_PAYOUT", amount, status: "COMPLETED", settledAt: new Date() }
-    });
-    distributed.push({ workerProfileId: worker.id, amount: Number(created.amount) });
+      const amount = Math.round(eligibleEarnings * (cooperative.dividendSharePercent / 100) * 100) / 100;
+      if (amount <= 0) continue;
+
+      rows.push({ workerProfileId: workerId, type: "DIVIDEND_PAYOUT", amount, status: "COMPLETED", settledAt });
+      distributed.push({ workerProfileId: workerId, amount });
+    }
+    if (rows.length > 0) {
+      await prisma.creditTransaction.createMany({ data: rows });
+    }
   }
 
   await writeAuditLog(prisma, {
