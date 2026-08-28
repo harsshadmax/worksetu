@@ -152,43 +152,49 @@ export const distributeDividends = asyncHandler(async (req: AuthenticatedRequest
 
   const workers = await prisma.workerProfile.findMany({ where: { cooperativeId: cooperative.id }, select: { id: true } });
 
-  const distributed = await prisma.$transaction(async (tx) => {
-    const results: { workerProfileId: string; amount: number }[] = [];
-    for (const worker of workers) {
-      const lastPayout = await tx.creditTransaction.findFirst({
-        where: { workerProfileId: worker.id, type: "DIVIDEND_PAYOUT" },
-        orderBy: { createdAt: "desc" },
-        select: { createdAt: true }
-      });
-      const earningsSinceLastPayout = await tx.creditTransaction.aggregate({
-        where: {
-          workerProfileId: worker.id,
-          type: "JOB_PAYOUT",
-          status: "COMPLETED",
-          ...(lastPayout ? { createdAt: { gt: lastPayout.createdAt } } : {})
-        },
-        _sum: { amount: true }
-      });
-      const eligibleEarnings = Number(earningsSinceLastPayout._sum.amount ?? 0);
-      if (eligibleEarnings <= 0) continue;
-
-      const amount = Math.round(eligibleEarnings * (cooperative.dividendSharePercent / 100) * 100) / 100;
-      if (amount <= 0) continue;
-
-      const created = await tx.creditTransaction.create({
-        data: { workerProfileId: worker.id, type: "DIVIDEND_PAYOUT", amount, status: "COMPLETED", settledAt: new Date() }
-      });
-      results.push({ workerProfileId: worker.id, amount: Number(created.amount) });
-    }
-
-    await writeAuditLog(tx, {
-      actorId: req.user!.id,
-      action: "DIVIDENDS_DISTRIBUTED",
-      entityType: "Cooperative",
-      entityId: cooperative.id,
-      metadata: { dividendSharePercent: cooperative.dividendSharePercent, workerCount: results.length }
+  // Deliberately NOT one interactive $transaction wrapping this whole loop:
+  // confirmed live that a cooperative with enough workers pushes the
+  // cumulative round-trip time past Prisma's 5s default interactive-
+  // transaction timeout ("Transaction API error: Transaction not found"),
+  // especially given this environment's demonstrated variable DB latency.
+  // There's also no actual atomicity requirement across workers here --
+  // each worker's payout is independent, and this is an admin-triggered
+  // batch job with no concurrent writer racing an individual worker's
+  // create the way, say, a user-initiated redemption would.
+  const distributed: { workerProfileId: string; amount: number }[] = [];
+  for (const worker of workers) {
+    const lastPayout = await prisma.creditTransaction.findFirst({
+      where: { workerProfileId: worker.id, type: "DIVIDEND_PAYOUT" },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true }
     });
-    return results;
+    const earningsSinceLastPayout = await prisma.creditTransaction.aggregate({
+      where: {
+        workerProfileId: worker.id,
+        type: "JOB_PAYOUT",
+        status: "COMPLETED",
+        ...(lastPayout ? { createdAt: { gt: lastPayout.createdAt } } : {})
+      },
+      _sum: { amount: true }
+    });
+    const eligibleEarnings = Number(earningsSinceLastPayout._sum.amount ?? 0);
+    if (eligibleEarnings <= 0) continue;
+
+    const amount = Math.round(eligibleEarnings * (cooperative.dividendSharePercent / 100) * 100) / 100;
+    if (amount <= 0) continue;
+
+    const created = await prisma.creditTransaction.create({
+      data: { workerProfileId: worker.id, type: "DIVIDEND_PAYOUT", amount, status: "COMPLETED", settledAt: new Date() }
+    });
+    distributed.push({ workerProfileId: worker.id, amount: Number(created.amount) });
+  }
+
+  await writeAuditLog(prisma, {
+    actorId: req.user!.id,
+    action: "DIVIDENDS_DISTRIBUTED",
+    entityType: "Cooperative",
+    entityId: cooperative.id,
+    metadata: { dividendSharePercent: cooperative.dividendSharePercent, workerCount: distributed.length }
   });
 
   return res.json({ cooperativeId: cooperative.id, dividendSharePercent: cooperative.dividendSharePercent, distributed });
