@@ -142,3 +142,17 @@ export const getWelfare = asyncHandler(async (req: AuthenticatedRequest, res: Re
 
   return res.json({ hoursWorkedToday, hoursWorkedThisWeek, consecutiveJobStreak, restRecommended });
 });
+
+export const getIncentives = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const worker = await prisma.workerProfile.findUnique({ where: { userId: req.user!.id } });
+  if (!worker) {
+    throw new AppError(404, "WORKER_PROFILE_NOT_FOUND", "Worker profile not found");
+  }
+
+  const incentives = await prisma.incentiveProgress.findMany({
+    where: { workerProfileId: worker.id },
+    orderBy: { expiry: "asc" }
+  });
+
+  return res.json(incentives);
+});

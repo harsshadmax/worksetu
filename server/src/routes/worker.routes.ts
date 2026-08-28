@@ -23,6 +23,7 @@ router.patch(
 
 router.get("/me/demand-heatmap", requireProvider, authenticatedRateLimit, workerController.getDemandHeatmap);
 router.get("/me/welfare", requireProvider, authenticatedRateLimit, workerController.getWelfare);
+router.get("/me/incentives", requireProvider, authenticatedRateLimit, workerController.getIncentives);
 router.get("/me/incoming", requireProvider, authenticatedRateLimit, getIncomingOffers);
 router.get("/me/bookings", requireProvider, authenticatedRateLimit, getMyWorkerBookings);
 
