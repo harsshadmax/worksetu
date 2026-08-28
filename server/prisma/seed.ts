@@ -143,8 +143,13 @@ async function main() {
     { id: "carpentry", translationKey: "carpentry", baseRate: 280, hourlyRate: 180, icon: "hammer" },
     { id: "painting", translationKey: "painting", baseRate: 350, hourlyRate: 220, icon: "paint-brush" },
     { id: "caregiving", translationKey: "caregiving", baseRate: 400, hourlyRate: 250, icon: "heart" },
-    { id: "gardening", translationKey: "gardening", baseRate: 200, hourlyRate: 120, icon: "flower" },
-    { id: "cleaning", translationKey: "cleaning", baseRate: 180, hourlyRate: 100, icon: "sparkles" },
+    // "flower"/"sparkles" were never valid Font Awesome 6 Free icon names
+    // (confirmed live: content: none on both), so these two cards rendered
+    // with no glyph at all despite the icon markup being wired correctly.
+    // seedling/broom are real icons in the same fa-solid set already used
+    // by every other service card.
+    { id: "gardening", translationKey: "gardening", baseRate: 200, hourlyRate: 120, icon: "seedling" },
+    { id: "cleaning", translationKey: "cleaning", baseRate: 180, hourlyRate: 100, icon: "broom" },
     { id: "domesticHelp", translationKey: "domesticHelp", baseRate: 220, hourlyRate: 130, icon: "utensils" }
   ];
   for (let i = 0; i < serviceData.length; i++) {
