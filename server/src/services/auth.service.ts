@@ -54,9 +54,18 @@ async function issueTokenPair(user: Pick<User, "id" | "role" | "tokenVersion">, 
 // then, dispatch is the same "always SENT in development" console stub
 // Section 18.4 describes for an unconfigured channel — not a gap, just
 // built in the order the PRD's own phase plan lays out.
+//
+// codeHash uses sha256, not bcrypt: this was a real registration-latency
+// contributor -- a second ~200-300ms synchronous BCRYPT_COST=12 hash,
+// on top of the password's own, running inside the registration
+// transaction on every signup. A 6-digit OTP is low-entropy, 10-minute-
+// lived, and already attempt-limited (MAX_OTP_ATTEMPTS in verifyOtp), so
+// it doesn't carry the same offline-brute-force threat a password hash
+// defends against -- sha256 (already used for refresh/reset tokens
+// elsewhere in this file) is the appropriate cost here.
 async function createOtpVerification(tx: Prisma.TransactionClient, userId: string, channel: "EMAIL" | "PHONE") {
   const code = Math.floor(100000 + Math.random() * 900000).toString();
-  const codeHash = await bcrypt.hash(code, BCRYPT_COST);
+  const codeHash = sha256(code);
   await tx.otpVerification.create({
     data: { userId, channel, codeHash, expiresAt: new Date(Date.now() + OTP_TTL_MS) }
   });
@@ -321,7 +330,9 @@ export async function verifyOtp(userId: string, channel: "EMAIL" | "PHONE", code
   if (record.attempts >= MAX_OTP_ATTEMPTS) {
     throw new AppError(429, "OTP_LOCKED", "Too many incorrect attempts, please request a new code");
   }
-  const valid = await bcrypt.compare(code, record.codeHash);
+  const submittedHash = Buffer.from(sha256(code));
+  const storedHash = Buffer.from(record.codeHash);
+  const valid = submittedHash.length === storedHash.length && crypto.timingSafeEqual(submittedHash, storedHash);
   if (!valid) {
     await prisma.otpVerification.update({ where: { id: record.id }, data: { attempts: { increment: 1 } } });
     throw new AppError(400, "OTP_INCORRECT", "Incorrect code");

@@ -47,7 +47,7 @@ services:
     name: worksetu-web
     env: static
     rootDir: .
-    buildCommand: mkdir -p dist && cp index.html app.js api.js mockData.js translations.js worksetu_logo.png dist/
+    buildCommand: mkdir -p dist && cp index.html app.js api.js mockData.js translations.js worksetu_logo.png worksetu-logo-wordmark.jpg dist/
     staticPublishPath: ./dist
     headers:
       - path: /*

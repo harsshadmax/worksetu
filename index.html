@@ -378,12 +378,12 @@
     .brand-logo:active {
       transform: scale(0.97);
     }
-    .logo-compact {
-      clip-path: inset(0% 0% 19% 0%);
-    }
-    .logo-emblem {
-      clip-path: circle(29% at 50% 36%);
-    }
+    /* logo-compact / logo-emblem previously used hand-tuned clip-path crops
+       (inset/circle) built for the old stacked emblem+wordmark logo's exact
+       internal layout. The current logo is a single flat wordmark with no
+       separate regions to crop, so both classes are now no-ops -- sizing
+       is handled by each <img>'s own width/height plus .brand-logo's
+       object-fit: contain. */
     .dark .brand-logo {
       filter: invert(1) hue-rotate(180deg) brightness(1.25) contrast(1.1);
       mix-blend-mode: screen;
@@ -499,13 +499,13 @@
         
         <!-- Logo and Title -->
         <div class="flex items-center cursor-pointer select-none" @click="setRole('landing')" style="height: 48px;">
-          <!-- Desktop & Tablet Logo (Emblem + Wordmark) -->
-          <div class="hidden sm:flex items-center overflow-hidden h-10 w-[140px]">
-            <img src="worksetu_logo.png" class="brand-logo logo-compact h-12 max-w-none" alt="Worksetu">
+          <!-- Desktop & Tablet Logo -->
+          <div class="hidden sm:flex items-center h-10 w-[140px]">
+            <img src="worksetu-logo-wordmark.jpg" class="brand-logo logo-compact h-full w-full" alt="Worksetu">
           </div>
-          <!-- Mobile Logo (Emblem Only) -->
-          <div class="flex sm:hidden items-center overflow-hidden h-9 w-9">
-            <img src="worksetu_logo.png" class="brand-logo logo-emblem h-10 w-10 max-w-none" alt="Worksetu">
+          <!-- Mobile Logo -->
+          <div class="flex sm:hidden items-center h-7 w-[100px]">
+            <img src="worksetu-logo-wordmark.jpg" class="brand-logo logo-emblem h-full w-full" alt="Worksetu">
           </div>
         </div>
 
@@ -616,8 +616,8 @@
             <div class="lg:col-span-8 space-y-8 text-left">
               <!-- Full Worksetu Logo -->
               <div class="scroll-reveal reveal-heading mb-2">
-                <img src="worksetu_logo.png" 
-                     class="brand-logo w-[170px] sm:w-[210px] lg:w-[260px] h-auto object-contain" 
+                <img src="worksetu-logo-wordmark.jpg"
+                     class="brand-logo w-[170px] sm:w-[210px] lg:w-[260px] h-auto object-contain"
                      alt="Worksetu Branding Logo">
               </div>
 
