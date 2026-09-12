@@ -947,9 +947,19 @@ const app = createApp({
       }
 
       api.onExpired(() => {
+        // Mirrors handleLogout's cleanup: this fires on a passive expiry
+        // (refresh cookie expired/invalid), not just the explicit Log Out
+        // button, so it must also tear down the socket and worker
+        // location-ping interval — confirmed live: without this, a
+        // left-open tab kept retrying the WebSocket forever with the dead
+        // token (infinite reconnection is socket.io's default) and kept
+        // firing the location-ping interval, both failing with 401s.
+        endSession();
         loggedInCustomer.value = null;
         loggedInWorker.value = null;
         loggedInAdmin.value = null;
+        activeBookingId.value = null;
+        activeBooking.value = null;
         currentRole.value = "landing";
         currentView.value = "home";
       });

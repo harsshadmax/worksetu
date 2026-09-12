@@ -277,3 +277,48 @@ test("worker: an incentive past its expiry is reported as EXPIRED, not PENDING",
   await page.getByRole("button", { name: "Incentives" }).click();
   await expect(page.getByText("Expired", { exact: true }).first()).toBeVisible({ timeout: 15000 });
 });
+
+// Regression test for a real bug found live: api.js's onSessionExpired path
+// (fired when a 401 survives a refresh attempt -- e.g. an expired/invalid
+// refresh cookie) cleared the in-memory access token but never called
+// endSession(), so the socket.io connection was left open with the dead
+// token. socket.io's default reconnection is infinite, so a left-open tab
+// retried the WebSocket (and, for a worker, the location-ping interval)
+// forever -- confirmed live via window.ApiClient.isSocketConnected()
+// staying true well after the expiry fired.
+test("worker: a session expiry (dead refresh cookie) disconnects the socket, not just the token", async ({ page, request, context }) => {
+  await pointFrontendAtBackend(page);
+  const worker = await registerAndApproveWorker(request, { lat: 12.9249, lng: 80.1 }, "SessionExpiry");
+
+  await page.goto("/");
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await page.getByRole("button", { name: "Cooperative Worker" }).first().click();
+  await page.locator('input[type="text"]').first().fill(worker.email);
+  await page.locator('input[type="password"]').fill(worker.password);
+  await page.getByRole("button", { name: "Sign In" }).click();
+  await expect(page.locator("text=Availability").first()).toBeVisible({ timeout: 45000 });
+
+  await expect
+    .poll(() => page.evaluate(() => (window as any).ApiClient.isSocketConnected()), { timeout: 15000 })
+    .toBe(true);
+
+  // Simulate a dead session the same way the live reproduction did: corrupt
+  // the in-memory token and wipe the refresh cookie, then drive a real
+  // protected request through the app's own client so its 401 -> failed
+  // refresh -> onSessionExpired path actually runs (not a hand-rolled stub).
+  await context.clearCookies();
+  const requestOutcome = await page.evaluate(async () => {
+    (window as any).ApiClient.setAccessToken("invalid.forced.token");
+    try {
+      await (window as any).ApiClient.request("GET", "/users/me");
+      return "no error thrown";
+    } catch (e: any) {
+      return e.message;
+    }
+  });
+  expect(requestOutcome).toMatch(/session has expired/i);
+
+  await expect
+    .poll(() => page.evaluate(() => (window as any).ApiClient.isSocketConnected()), { timeout: 15000 })
+    .toBe(false);
+});
