@@ -135,6 +135,17 @@ test("admin: log in, verify a worker through the UI, and confirm actions are aud
   // Confirm the same trail is visible through the real Audit Log UI.
   await page.getByRole("button", { name: "Audit Logs" }).click();
   await expect(page.getByText("WORKER_VERIFIED").first()).toBeVisible({ timeout: 30000 });
+
+  // Regression check for a real bug found live: the Audit Logs table's
+  // headers reused three unrelated translation keys -- actionAccept
+  // ("Accept"), services ("Services"), and datetimeLabel ("Scheduled Date
+  // & Time") -- none of which describe the columns actually rendered
+  // (log.action / log.entityType / log.createdAt). Now uses dedicated
+  // auditActionLabel/auditEntityTypeLabel/auditTimestampLabel keys.
+  await expect(page.getByRole("columnheader", { name: "Action", exact: true })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Entity Type", exact: true })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Timestamp", exact: true })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Accept", exact: true })).not.toBeVisible();
 });
 
 // Regression test for a real bug found live: loadAdminBookings,
