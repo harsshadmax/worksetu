@@ -1245,6 +1245,19 @@ const app = createApp({
       bookingFilterStatus,
       filteredWorkers,
       filteredCustomers,
+      // Bound to the status-filter <select>'s @change on 4 admin pages
+      // (Service Dispatch Requests, Workers Directory, Customers Directory,
+      // Bookings Ledger) -- each page's initial load worked (called
+      // directly from other in-scope functions), but the filter dropdowns
+      // were silently dead without these exposed: Vue can only resolve a
+      // template's @change="fnName" against setup()'s returned object, not
+      // an unreturned local closure. Confirmed live via a Vue warning
+      // ("Property ... was accessed during render but is not defined on
+      // instance") and by reproducing each filter doing nothing.
+      loadAdminBookings,
+      loadAdminWorkers,
+      loadAdminCustomers,
+      loadAdminBookingsLedger,
       showAddServiceModal,
       showEditServiceModal,
       newServiceData,

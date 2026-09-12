@@ -136,3 +136,51 @@ test("admin: log in, verify a worker through the UI, and confirm actions are aud
   await page.getByRole("button", { name: "Audit Logs" }).click();
   await expect(page.getByText("WORKER_VERIFIED").first()).toBeVisible({ timeout: 30000 });
 });
+
+// Regression test for a real bug found live: loadAdminBookings,
+// loadAdminWorkers, loadAdminCustomers, and loadAdminBookingsLedger
+// (app.js) are each wired to their page's status-filter <select> via
+// @change, but none were in setup()'s returned object -- Vue can only
+// resolve a template's @change against that object, so all four filters
+// were silent no-ops (each page's *initial* load still worked, since
+// that's a direct in-scope function call, not a template binding).
+// Confirmed live via a Vue warning ("Property ... was accessed during
+// render but is not defined on instance") and by reproducing the Workers
+// Directory filter leaving a PENDING worker visible under "APPROVED".
+// This test covers loadAdminWorkers; the other three share the identical
+// root cause and fix (all four now appear in the same return block).
+test("admin: the Workers Directory verification-status filter actually filters", async ({ page, request }) => {
+  await pointFrontendAtBackend(page);
+  const id = uniqueId();
+  const fullName = `E2E Filter Regression Worker ${id}`;
+  await apiPost(request, "/auth/worker/register", {
+    fullName,
+    email: `e2e.filterregression.${id}@example.com`,
+    phone: uniquePhone("8"),
+    password: "TestPass@123",
+    cooperativeId: "coop-1",
+    primarySkillId: "plumbing",
+    experienceYears: 2,
+    homeLocation: { lat: 12.94, lng: 80.11, address: "Filter regression test worker" },
+    serviceAreaRadiusKm: 10,
+    acceptedTerms: true
+  });
+
+  await page.goto("/");
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await page.getByRole("button", { name: "Platform Administrator" }).first().click();
+  await page.getByRole("button", { name: "Registrar (Super Admin)" }).click();
+  await expect(page.getByText("Registrar Dashboard Overview")).toBeVisible({ timeout: 60000 });
+
+  await page.getByRole("button", { name: "Workers Directory" }).click();
+  await expect(page.getByText(fullName)).toBeVisible({ timeout: 30000 });
+
+  // This freshly-registered worker is PENDING, so selecting "APPROVED"
+  // must make it disappear if the filter actually re-fetches.
+  await page.locator("select").filter({ has: page.locator('option[value="APPROVED"]') }).selectOption("APPROVED");
+  await expect(page.getByText(fullName)).not.toBeVisible({ timeout: 15000 });
+
+  // ...and selecting "PENDING" must bring it back.
+  await page.locator("select").filter({ has: page.locator('option[value="APPROVED"]') }).selectOption("PENDING");
+  await expect(page.getByText(fullName)).toBeVisible({ timeout: 15000 });
+});
