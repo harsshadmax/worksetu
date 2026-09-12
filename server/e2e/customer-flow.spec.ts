@@ -133,3 +133,72 @@ test("customer: register, request a booking, track to completion, and leave a re
   // this spec already carries an explicit timeout.
   await expect(page.getByRole("button", { name: "Submit Review" })).toHaveCount(0, { timeout: 60000 });
 });
+
+// Regression test for a real performance bug found live: reported as
+// "severe lag, UI feels unresponsive" on login/logout. Root cause was
+// setupLandingStatsObserver (app.js) creating a new IntersectionObserver
+// (plus two setTimeouts) every time it ran, with nothing ever
+// disconnecting the previous one -- and it re-runs on every logout via
+// watch(currentRole, initializeRoleData)'s "landing" branch. Each
+// login/logout cycle leaked one more observer permanently watching
+// #landing-stats; with several stacked up, all of them fire
+// triggerStatsAnimation() together, so N leaked observers means N
+// competing requestAnimationFrame loops writing the same three refs every
+// frame -- confirmed live via instrumenting window.IntersectionObserver
+// and watching the live-instance count grow, uncapped, with each cycle.
+test("customer: repeated login/logout does not leak IntersectionObservers", async ({ page }) => {
+  await pointFrontendAtBackend(page);
+
+  // Count constructions vs. disconnects of any IntersectionObserver the
+  // app creates, from before app.js's own script even runs.
+  await page.addInitScript(() => {
+    (window as any).__ioLiveCount = 0;
+    const RealIO = window.IntersectionObserver;
+    class CountingIO extends RealIO {
+      constructor(...args: ConstructorParameters<typeof RealIO>) {
+        super(...args);
+        (window as any).__ioLiveCount++;
+      }
+      disconnect() {
+        (window as any).__ioLiveCount--;
+        return super.disconnect();
+      }
+    }
+    (window as any).IntersectionObserver = CountingIO;
+  });
+
+  const id = uniqueId();
+  const email = `e2e.customer.iolegal.${id}@example.com`;
+  await page.goto("/");
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await page.getByRole("button", { name: "Customer" }).first().click();
+  await page.getByText("Register here").click();
+  await page.locator('input[type="text"]').nth(0).fill("E2E IO Leak Customer");
+  await page.locator('input[type="email"]').fill(email);
+  await page.locator('input[type="tel"]').fill(uniquePhone("9"));
+  await page.locator('input[type="text"]').nth(1).fill("Tambaram, Chennai");
+  await page.locator('input[type="password"]').fill("TestPass@123");
+  await page.locator('input[type="checkbox"]').check();
+  await page.getByRole("button", { name: "Register" }).click();
+  await expect(page.getByText("Plumbing").first()).toBeVisible({ timeout: 60000 });
+
+  // Registration already logs in once (one observer armed on the landing
+  // page before that, per onMounted). Now cycle logout -> login several
+  // times purely to exercise the leak path.
+  for (let i = 0; i < 3; i++) {
+    await page.getByRole("button", { name: "Log Out" }).click();
+    await expect(page.getByRole("button", { name: "Get Started as Customer" })).toBeVisible({ timeout: 15000 });
+    // The observer's own setTimeout(150) + setTimeout(1500) chain needs to
+    // have actually run before the next cycle for a leak to accumulate.
+    await page.waitForTimeout(1800);
+
+    await page.getByRole("button", { name: "Customer" }).first().click();
+    await page.locator('input[type="text"]').first().fill(email);
+    await page.locator('input[type="password"]').fill("TestPass@123");
+    await page.getByRole("button", { name: "Sign In" }).click();
+    await expect(page.getByText("Plumbing").first()).toBeVisible({ timeout: 30000 });
+  }
+
+  const liveCount = await page.evaluate(() => (window as any).__ioLiveCount);
+  expect(liveCount).toBeLessThanOrEqual(1);
+});

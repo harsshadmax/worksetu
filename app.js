@@ -361,8 +361,16 @@ const app = createApp({
         });
         api.setAccessToken(res.token);
         startSession();
-        await loadOwnProfile(res.role);
-        await loadCatalog();
+        // loadOwnProfile (GET /users/me) and loadCatalog (GET /services +
+        // /public/cooperatives) don't depend on each other, but were
+        // previously awaited one after another -- an extra full network
+        // round trip of perceived lag on every login under this
+        // environment's demonstrated worst-case per-request latency.
+        // loadCatalog is also redundant here in the common case: onMounted
+        // already loads the catalog once at app boot, well before a user
+        // reaches the login form, so re-fetching it again on every login is
+        // wasted work -- only do it if that initial load hasn't landed yet.
+        await Promise.all([loadOwnProfile(res.role), services.value.length === 0 ? loadCatalog() : Promise.resolve()]);
         currentView.value = "dashboard";
         await initializeRoleData(currentRole.value);
         authEmail.value = "";
@@ -435,8 +443,16 @@ const app = createApp({
       }
     };
 
-    const handleLogout = async () => {
-      await api.request("POST", "/auth/logout").catch(() => {});
+    const handleLogout = () => {
+      // Confirmed live: awaiting the /auth/logout round trip before touching
+      // any local state made the button appear to do nothing until the
+      // network call resolved, under this environment's demonstrated
+      // worst-case per-request latency. Revoking the server-side refresh
+      // token is best-effort housekeeping the user doesn't need to wait
+      // on -- the local session is what actually has to end immediately, so
+      // reset it synchronously first and fire the request in the
+      // background. The backend reads the refresh cookie for this route,
+      // not the access token, so clearing it first here doesn't affect it.
       endSession();
       loggedInCustomer.value = null;
       loggedInWorker.value = null;
@@ -445,6 +461,7 @@ const app = createApp({
       activeBooking.value = null;
       currentRole.value = "landing";
       currentView.value = "home";
+      api.request("POST", "/auth/logout").catch(() => {});
     };
 
     // Active Route Protection Watcher
@@ -977,9 +994,22 @@ const app = createApp({
         });
       });
 
+      // Re-armed on every role/view/tab change via the watch() below --
+      // confirmed live (alongside the identical pattern in
+      // setupLandingStatsObserver) that nothing previously disconnected
+      // the prior observer, so every navigation anywhere in the app (not
+      // just login/logout) permanently leaked one more IntersectionObserver
+      // watching every .scroll-reveal element on the page. This was the
+      // dominant contributor to the reported lag, since it fires on every
+      // click that changes currentRole/currentView/adminTab, not only auth.
+      let scrollRevealObserver = null;
       const setupScrollReveal = () => {
         if (typeof IntersectionObserver === "undefined") return;
-        const observer = new IntersectionObserver(
+        if (scrollRevealObserver) {
+          scrollRevealObserver.disconnect();
+          scrollRevealObserver = null;
+        }
+        scrollRevealObserver = new IntersectionObserver(
           (entries) => {
             entries.forEach((entry) => {
               if (entry.isIntersecting) {
@@ -992,7 +1022,7 @@ const app = createApp({
           },
           { threshold: 0.05 }
         );
-        document.querySelectorAll(".scroll-reveal").forEach((el) => observer.observe(el));
+        document.querySelectorAll(".scroll-reveal").forEach((el) => scrollRevealObserver.observe(el));
       };
       setTimeout(setupScrollReveal, 100);
 
@@ -1111,8 +1141,29 @@ const app = createApp({
       if (hasAnimatedOnce.value) triggerStatsAnimation();
     });
 
+    // Re-armed on every return to the landing page (initializeRoleData's
+    // "landing" branch runs on every logout via watch(currentRole, ...)).
+    // Confirmed live: nothing previously disconnected the prior
+    // IntersectionObserver or cleared the prior setTimeouts, so each
+    // login/logout cycle left one more observer permanently watching
+    // #landing-stats -- with N leaked observers all firing
+    // triggerStatsAnimation() together, N independent requestAnimationFrame
+    // loops end up writing the same three refs every frame, and the UI
+    // (including the login/logout buttons) gets laggier with every cycle.
+    // Tracking and tearing down the previous observer/timers here keeps
+    // exactly one of each alive at a time.
+    let landingStatsObserver = null;
+    let landingStatsTimeout1 = null;
+    let landingStatsTimeout2 = null;
     const setupLandingStatsObserver = () => {
-      setTimeout(() => {
+      if (landingStatsObserver) {
+        landingStatsObserver.disconnect();
+        landingStatsObserver = null;
+      }
+      if (landingStatsTimeout1) clearTimeout(landingStatsTimeout1);
+      if (landingStatsTimeout2) clearTimeout(landingStatsTimeout2);
+
+      landingStatsTimeout1 = setTimeout(() => {
         const statsEl = document.getElementById("landing-stats");
         if (statsEl) {
           animatedWorkers.value = 0;
@@ -1120,13 +1171,13 @@ const app = createApp({
           animatedCooperatives.value = 0;
           statsAnimationCompleted.value = false;
           hasAnimatedOnce.value = false;
-          const observer = new IntersectionObserver(
+          landingStatsObserver = new IntersectionObserver(
             (entries) => entries.forEach((entry) => entry.isIntersecting && triggerStatsAnimation()),
             { threshold: 0.15 }
           );
-          observer.observe(statsEl);
+          landingStatsObserver.observe(statsEl);
         }
-        setTimeout(() => {
+        landingStatsTimeout2 = setTimeout(() => {
           if (!hasAnimatedOnce.value) triggerStatsAnimation();
         }, 1500);
       }, 150);
@@ -1398,7 +1449,14 @@ app.component("animated-number", {
 
     onUnmounted(() => {
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
-      if (observer && elementRef.value) observer.disconnect();
+      // Confirmed live: gating this on elementRef.value (rather than just
+      // `observer` itself) meant disconnect() effectively never ran --
+      // Vue has already nulled the template ref by the time onUnmounted
+      // fires, well before this check, so every mount of this component
+      // (all 3 landing-page hero stats, remounted on every logout) leaked
+      // its own IntersectionObserver. observer.disconnect() itself doesn't
+      // need the element to still exist.
+      if (observer) observer.disconnect();
     });
 
     return { displayValue, elementRef };
