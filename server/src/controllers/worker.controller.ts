@@ -149,6 +149,15 @@ export const getIncentives = asyncHandler(async (req: AuthenticatedRequest, res:
     throw new AppError(404, "WORKER_PROFILE_NOT_FOUND", "Worker profile not found");
   }
 
+  // Nothing else in the app ever transitions a row out of PENDING once its
+  // deadline passes, so a self-heal here keeps status accurate without a
+  // separate cron sweep — same read-time-freshness pattern used for OTP
+  // expiry and wallet balance derivation elsewhere in this codebase.
+  await prisma.incentiveProgress.updateMany({
+    where: { workerProfileId: worker.id, status: "PENDING", expiry: { lt: new Date() } },
+    data: { status: "EXPIRED" }
+  });
+
   const incentives = await prisma.incentiveProgress.findMany({
     where: { workerProfileId: worker.id },
     orderBy: { expiry: "asc" }

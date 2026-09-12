@@ -1,5 +1,18 @@
 import { test, expect } from "@playwright/test";
-import { pointFrontendAtBackend, apiPost, apiPatch, uniqueId, uniquePhone, pollUntil, loginAdmin, clearRateLimitState, BACKEND_URL } from "./helpers";
+import {
+  pointFrontendAtBackend,
+  apiPost,
+  apiPatch,
+  apiGet,
+  uniqueId,
+  uniquePhone,
+  pollUntil,
+  loginAdmin,
+  clearRateLimitState,
+  registerAndApproveWorker,
+  BACKEND_URL
+} from "./helpers";
+import { prisma } from "../src/lib/prisma";
 
 test.beforeEach(clearRateLimitState);
 
@@ -225,4 +238,42 @@ test("worker: register, get verified, accept a dispatch offer, complete the job,
   await page.locator('input[type="number"]').fill("10");
   await page.getByRole("button", { name: "Redeem to Bank" }).click();
   await expect(page.getByText(/₹/).first()).toBeVisible();
+});
+
+// Regression test for a real bug found live: getIncentives (worker.controller.ts)
+// returned IncentiveProgress rows as-is, and nothing anywhere ever transitioned
+// a row out of PENDING once its `expiry` passed — a worker would see a dead
+// incentive as still achievable indefinitely. Confirmed via GET /workers/me/incentives
+// self-healing PENDING-but-past-expiry rows to EXPIRED on read.
+test("worker: an incentive past its expiry is reported as EXPIRED, not PENDING", async ({ page, request }) => {
+  await pointFrontendAtBackend(page);
+  const worker = await registerAndApproveWorker(request, { lat: 12.9249, lng: 80.1 }, "IncentiveExpiry");
+
+  const staleIncentive = await prisma.incentiveProgress.create({
+    data: {
+      workerProfileId: worker.workerProfileId,
+      title: "Complete 5 jobs this week",
+      reward: 200,
+      reason: "Weekly job-volume bonus",
+      progress: 3,
+      target: 5,
+      status: "PENDING",
+      expiry: new Date(Date.now() - 24 * 60 * 60 * 1000) // yesterday
+    }
+  });
+
+  const incentives = await apiGet<{ id: string; status: string }[]>(request, "/workers/me/incentives", worker.token);
+  const updated = incentives.find((i) => i.id === staleIncentive.id);
+  expect(updated?.status).toBe("EXPIRED");
+
+  await page.goto("/");
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await page.getByRole("button", { name: "Cooperative Worker" }).first().click();
+  await page.locator('input[type="text"]').first().fill(worker.email);
+  await page.locator('input[type="password"]').fill(worker.password);
+  await page.getByRole("button", { name: "Sign In" }).click();
+  await expect(page.locator("text=Availability").first()).toBeVisible({ timeout: 45000 });
+
+  await page.getByRole("button", { name: "Incentives" }).click();
+  await expect(page.getByText("Expired", { exact: true }).first()).toBeVisible({ timeout: 15000 });
 });
