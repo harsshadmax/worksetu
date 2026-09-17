@@ -1801,13 +1801,24 @@ const app = createApp({
       const h = MAP_H / mapZoom.value;
       return `${mapCenter.value.x - w / 2} ${mapCenter.value.y - h / 2} ${w} ${h}`;
     });
-    const livePlotPoints = computed(() =>
-      projectPoints(filteredLiveWorkers.value, (w) => w.lat, (w) => w.lng, 8, 92).map((p) => ({
-        worker: p.item,
-        x: (p.x / 100) * MAP_W,
-        y: (p.y / 100) * MAP_H
-      }))
-    );
+    // Workers cluster tightly (most share a city), so a name label is only drawn
+    // when its on-screen box doesn't overlap one already placed. Zooming in
+    // spreads points apart, so more labels appear as the user zooms.
+    const LABEL_W = 70;
+    const LABEL_H = 14;
+    const livePlotPoints = computed(() => {
+      const zoom = mapZoom.value;
+      const placed = [];
+      return projectPoints(filteredLiveWorkers.value, (w) => w.lat, (w) => w.lng, 8, 92).map((p) => {
+        const x = (p.x / 100) * MAP_W;
+        const y = (p.y / 100) * MAP_H;
+        const sx = x * zoom;
+        const sy = y * zoom;
+        const showLabel = !placed.some((q) => Math.abs(q.sx - sx) < LABEL_W && Math.abs(q.sy - sy) < LABEL_H);
+        if (showLabel) placed.push({ sx, sy });
+        return { worker: p.item, x, y, showLabel };
+      });
+    });
     const zoomIn = () => (mapZoom.value = Math.min(6, mapZoom.value * 1.5));
     const zoomOut = () => (mapZoom.value = Math.max(1, mapZoom.value / 1.5));
     const fitAll = () => {
@@ -2084,6 +2095,7 @@ const app = createApp({
       liveStatsOffDuty,
       liveStatsActiveJobs,
       computedViewBox,
+      mapZoom,
       livePlotPoints,
       zoomIn,
       zoomOut,

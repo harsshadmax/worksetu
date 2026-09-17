@@ -114,6 +114,17 @@
       font-size: 0.875rem !important;
       transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
+    /* The rule above pins padding with !important, which silently cancelled the
+       Tailwind pl-N and pr-N utilities that make room for inline icons (search magnifier,
+       password eye). Re-apply them with equal-or-higher specificity (the :not() chain counts). */
+    input.pl-8:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { padding-left: 2rem !important; }
+    input.pl-9:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { padding-left: 2.25rem !important; }
+    input.pl-10:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { padding-left: 2.5rem !important; }
+    input.pr-8:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { padding-right: 2rem !important; }
+    input.pr-12:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { padding-right: 3rem !important; }
+    /* Header language picker sits inside its own pill; it must not get the boxed input look. */
+    select.header-lang-select { padding: 0 0.25rem !important; border: 0 !important; background-color: transparent !important; box-shadow: none !important; font-size: 0.75rem !important; }
+
     input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus, textarea:focus, select:focus {
       border-color: var(--primary-blue) !important;
       box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15) !important;
@@ -584,39 +595,43 @@
         </div>
 
         <!-- Horizontal Navigation Links (Desktop) -->
-        <div class="hidden lg:flex items-center space-x-1.5 bg-custom-very-light-blue p-1.5 rounded-xl border border-custom-border">
+        <div class="hidden lg:flex items-center space-x-1 bg-custom-very-light-blue p-1.5 rounded-xl border border-custom-border flex-shrink min-w-0">
           <button
             @click="setRole('landing')"
             :class="currentRole === 'landing' ? 'bg-custom-card text-custom-primary shadow-sm font-bold' : 'text-custom-sec hover:text-custom-main font-semibold'"
-            class="px-3.5 py-2 text-xs uppercase tracking-wider transition-all duration-150 rounded-lg flex items-center space-x-2">
+            :title="t('home')"
+            class="px-3 py-2 text-xs uppercase tracking-wider whitespace-nowrap transition-all duration-150 rounded-lg flex items-center space-x-2">
             <i class="fa-solid fa-house text-[11px]"></i>
-            <span>{{ t('home') }}</span>
+            <span :class="currentActiveUser ? 'hidden 2xl:inline' : 'hidden xl:inline'">{{ t('home') }}</span>
           </button>
           <button
             @click="setRole('customer')"
             :class="currentRole === 'customer' ? 'bg-custom-card text-custom-primary shadow-sm font-bold' : 'text-custom-sec hover:text-custom-main font-semibold'"
-            class="px-3.5 py-2 text-xs uppercase tracking-wider transition-all duration-150 rounded-lg flex items-center space-x-2">
+            :title="t('customer')"
+            class="px-3 py-2 text-xs uppercase tracking-wider whitespace-nowrap transition-all duration-150 rounded-lg flex items-center space-x-2">
             <i class="fa-solid fa-user text-[11px]"></i>
-            <span>{{ t('customer') }}</span>
+            <span :class="currentActiveUser ? 'hidden 2xl:inline' : 'hidden xl:inline'">{{ t('customer') }}</span>
           </button>
           <button
             @click="setRole('worker')"
             :class="currentRole === 'worker' ? 'bg-custom-card text-custom-primary shadow-sm font-bold' : 'text-custom-sec hover:text-custom-main font-semibold'"
-            class="px-3.5 py-2 text-xs uppercase tracking-wider transition-all duration-150 rounded-lg flex items-center space-x-2">
+            :title="t('worker')"
+            class="px-3 py-2 text-xs uppercase tracking-wider whitespace-nowrap transition-all duration-150 rounded-lg flex items-center space-x-2">
             <i class="fa-solid fa-wrench text-[11px]"></i>
-            <span>{{ t('worker') }}</span>
+            <span :class="currentActiveUser ? 'hidden 2xl:inline' : 'hidden xl:inline'">{{ t('worker') }}</span>
           </button>
           <button
             @click="setRole('admin')"
             :class="currentRole === 'admin' ? 'bg-custom-card text-custom-primary shadow-sm font-bold' : 'text-custom-sec hover:text-custom-main font-semibold'"
-            class="px-3.5 py-2 text-xs uppercase tracking-wider transition-all duration-150 rounded-lg flex items-center space-x-2">
+            :title="t('admin')"
+            class="px-3 py-2 text-xs uppercase tracking-wider whitespace-nowrap transition-all duration-150 rounded-lg flex items-center space-x-2">
             <i class="fa-solid fa-shield-halved text-[11px]"></i>
-            <span>{{ t('admin') }}</span>
+            <span :class="currentActiveUser ? 'hidden 2xl:inline' : 'hidden xl:inline'">{{ t('admin') }}</span>
           </button>
         </div>
 
         <!-- Right Side Nav Actions -->
-        <div class="flex items-center space-x-3">
+        <div class="flex items-center space-x-2 xl:space-x-3 flex-shrink-0">
 
           <!-- Language Selector -->
           <div class="relative flex items-center bg-custom-very-light-blue border border-custom-border rounded-lg px-2.5 py-1.5">
@@ -624,7 +639,7 @@
             <select
               :value="language"
               @change="changeLanguage($event.target.value)"
-              class="bg-transparent text-custom-main text-xs font-bold tracking-wider uppercase border-0 p-0 focus:outline-none cursor-pointer">
+              class="header-lang-select bg-transparent text-custom-main text-xs font-bold tracking-wider uppercase border-0 p-0 focus:outline-none cursor-pointer">
               <option value="en">EN</option>
               <option value="hi">हिन्दी</option>
               <option value="ta">தமிழ்</option>
@@ -706,10 +721,10 @@
               @click.stop="toggleProfileMenu"
               class="hidden md:flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-custom-very-light-blue border border-custom-border text-xs hover:border-custom-primary transition cursor-pointer">
               <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span class="font-bold text-custom-main truncate max-w-[140px]" :title="currentActiveUser.fullName">
+              <span class="font-bold text-custom-main truncate max-w-[120px]" :title="currentActiveUser.fullName">
                 {{ currentActiveUser.fullName }}
               </span>
-              <span class="text-[9px] uppercase tracking-wider font-extrabold px-1.5 py-0.5 rounded"
+              <span class="hidden 2xl:inline-block text-[9px] uppercase tracking-wider font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap"
                 :class="{
                   'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200': currentRole === 'customer',
                   'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200': currentRole === 'worker',
@@ -763,9 +778,11 @@
             <button
               type="button"
               @click="handleLogout"
-              class="px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-red-600 hover:text-white hover:bg-red-600 dark:text-red-400 dark:hover:bg-red-600 dark:hover:text-white transition duration-150 rounded-lg border border-red-200 dark:border-red-900/50 flex items-center space-x-1">
+              :title="t('logout')"
+              :aria-label="t('logout')"
+              class="px-3 py-1.5 text-xs font-bold uppercase tracking-wider whitespace-nowrap text-red-600 hover:text-white hover:bg-red-600 dark:text-red-400 dark:hover:bg-red-600 dark:hover:text-white transition duration-150 rounded-lg border border-red-200 dark:border-red-900/50 flex items-center space-x-1">
               <i class="fa-solid fa-right-from-bracket text-[10px]"></i>
-              <span class="hidden sm:inline">{{ t('logout') }}</span>
+              <span class="hidden 2xl:inline">{{ t('logout') }}</span>
             </button>
           </div>
 
@@ -3572,11 +3589,11 @@
                     </defs>
                     <rect x="-600" y="-400" width="1800" height="1200" fill="url(#mapGrid)" />
                     <g v-for="p in livePlotPoints" :key="p.worker.workerId" class="cursor-pointer" @click="focusWorker(p.worker)">
-                      <circle v-if="selectedWorkerId === p.worker.workerId" :cx="p.x" :cy="p.y" r="14" fill="none" stroke="#3B82F6" stroke-width="1.5" stroke-dasharray="2,2" />
-                      <circle :cx="p.x" :cy="p.y" r="6"
+                      <circle v-if="selectedWorkerId === p.worker.workerId" :cx="p.x" :cy="p.y" :r="14 / mapZoom" fill="none" stroke="#3B82F6" :stroke-width="1.5 / mapZoom" stroke-dasharray="2,2" />
+                      <circle :cx="p.x" :cy="p.y" :r="6 / mapZoom"
                         :fill="p.worker.status === 'AVAILABLE' ? '#10B981' : p.worker.status === 'ON_JOB' ? '#2563EB' : p.worker.status === 'TRAVELLING' ? '#F59E0B' : '#94A3B8'"
-                        :stroke="selectedWorkerId === p.worker.workerId ? '#ffffff' : 'transparent'" stroke-width="1.5" />
-                      <text :x="p.x + 9" :y="p.y - 8" :fill="selectedWorkerId === p.worker.workerId ? '#93C5FD' : 'rgba(255,255,255,0.75)'" font-size="9" font-family="monospace" font-weight="bold">{{ p.worker.name.split(' ')[0] }}</text>
+                        :stroke="selectedWorkerId === p.worker.workerId ? '#ffffff' : 'transparent'" :stroke-width="1.5 / mapZoom" />
+                      <text v-if="p.showLabel || selectedWorkerId === p.worker.workerId" :x="p.x + 9 / mapZoom" :y="p.y - 8 / mapZoom" :fill="selectedWorkerId === p.worker.workerId ? '#93C5FD' : 'rgba(255,255,255,0.8)'" :font-size="9 / mapZoom" font-family="monospace" font-weight="bold">{{ p.worker.name.split(' ')[0] }}</text>
                     </g>
                   </svg>
                   <div v-if="livePlotPoints.length === 0" class="absolute inset-0 flex items-center justify-center text-xs font-bold text-slate-400">{{ t('noLocationYet') }}</div>
@@ -4513,9 +4530,9 @@
   <!-- Render's CDN caches each file for up to 5 min (s-maxage=300), so a fresh
        index.html can pair with a stale app.js right after a deploy. Bump ?v= on all
        four tags whenever any of these files changes. -->
-  <script src="translations.js?v=2026-09-17.1"></script>
-  <script src="mockData.js?v=2026-09-17.1"></script>
-  <script src="api.js?v=2026-09-17.1"></script>
-  <script src="app.js?v=2026-09-17.1"></script>
+  <script src="translations.js?v=2026-09-17.2"></script>
+  <script src="mockData.js?v=2026-09-17.2"></script>
+  <script src="api.js?v=2026-09-17.2"></script>
+  <script src="app.js?v=2026-09-17.2"></script>
 </body>
 </html>
