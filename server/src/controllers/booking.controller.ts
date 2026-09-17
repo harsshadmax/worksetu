@@ -141,13 +141,12 @@ export const listMyBookings = asyncHandler(async (req: AuthenticatedRequest, res
   if (!parsed.success) return sendValidationError(req, res, parsed.error);
   const { page, pageSize } = parsed.data;
 
-  const customerProfile = await prisma.customerProfile.findUnique({ where: { userId: req.user!.id } });
-  if (!customerProfile) {
-    throw new AppError(404, "CUSTOMER_PROFILE_NOT_FOUND", "Customer profile not found");
-  }
-
-  const where = { customerId: customerProfile.id };
-  const [items, totalCount] = await Promise.all([
+  // Filtering through the relation (customer.userId) lets the profile check
+  // run alongside the list queries instead of costing its own round trip
+  // first; the 404 for a missing profile is unchanged.
+  const where = { customer: { userId: req.user!.id } };
+  const [customerProfile, items, totalCount] = await Promise.all([
+    prisma.customerProfile.findUnique({ where: { userId: req.user!.id }, select: { id: true } }),
     prisma.booking.findMany({
       where,
       include: { assignedWorker: { include: { user: true } } },
@@ -157,6 +156,9 @@ export const listMyBookings = asyncHandler(async (req: AuthenticatedRequest, res
     }),
     prisma.booking.count({ where })
   ]);
+  if (!customerProfile) {
+    throw new AppError(404, "CUSTOMER_PROFILE_NOT_FOUND", "Customer profile not found");
+  }
 
   return res.json(
     paginate(
@@ -248,19 +250,18 @@ export const startBooking = asyncHandler(async (req: AuthenticatedRequest, res: 
 });
 
 export const getIncomingOffers = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const worker = await prisma.workerProfile.findUnique({ where: { userId: req.user!.id } });
-  if (!worker) {
-    throw new AppError(404, "WORKER_PROFILE_NOT_FOUND", "Worker profile not found");
-  }
-
-  const [offers, config] = await Promise.all([
+  const [worker, offers, config] = await Promise.all([
+    prisma.workerProfile.findUnique({ where: { userId: req.user!.id }, select: { id: true } }),
     prisma.dispatchLog.findMany({
-      where: { workerId: worker.id, outcome: "OFFERED" },
+      where: { worker: { userId: req.user!.id }, outcome: "OFFERED" },
       include: { booking: true },
       orderBy: { offeredAt: "desc" }
     }),
     prisma.platformConfig.findUnique({ where: { id: 1 } })
   ]);
+  if (!worker) {
+    throw new AppError(404, "WORKER_PROFILE_NOT_FOUND", "Worker profile not found");
+  }
   const top3Timeout = config?.top3TimeoutSeconds ?? 45;
   const poolTimeout = config?.poolTimeoutSeconds ?? 120;
 
@@ -291,13 +292,9 @@ export const getMyWorkerBookings = asyncHandler(async (req: AuthenticatedRequest
   if (!parsed.success) return sendValidationError(req, res, parsed.error);
   const { page, pageSize } = parsed.data;
 
-  const worker = await prisma.workerProfile.findUnique({ where: { userId: req.user!.id } });
-  if (!worker) {
-    throw new AppError(404, "WORKER_PROFILE_NOT_FOUND", "Worker profile not found");
-  }
-
-  const where = { assignedWorkerId: worker.id };
-  const [items, totalCount] = await Promise.all([
+  const where = { assignedWorker: { userId: req.user!.id } };
+  const [worker, items, totalCount] = await Promise.all([
+    prisma.workerProfile.findUnique({ where: { userId: req.user!.id }, select: { id: true } }),
     prisma.booking.findMany({
       where,
       include: { customer: { include: { user: true } } },
@@ -307,6 +304,9 @@ export const getMyWorkerBookings = asyncHandler(async (req: AuthenticatedRequest
     }),
     prisma.booking.count({ where })
   ]);
+  if (!worker) {
+    throw new AppError(404, "WORKER_PROFILE_NOT_FOUND", "Worker profile not found");
+  }
 
   // Distance/navigation/contact info is only meaningful (and only shown by
   // the frontend) for a currently-active assignment, so it's computed just

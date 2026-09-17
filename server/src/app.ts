@@ -24,6 +24,7 @@ import { requestLogger } from "./middleware/request-logger";
 import { errorHandler, notFoundHandler } from "./utils/app-error";
 import { io } from "./lib/socket";
 import { startReconciliationSweep } from "./services/dispatch-reconciliation.service";
+import { serverTiming } from "./lib/request-timing";
 
 const app = express();
 
@@ -32,6 +33,7 @@ const app = express();
 // can be correlated to it.
 app.use(requestId);
 app.use(requestLogger);
+app.use(serverTiming);
 
 // Section 8.3 — HSTS, X-Content-Type-Options, X-Frame-Options DENY, a
 // restrictive default-src CSP (appropriate for a JSON API), and removes
@@ -44,7 +46,10 @@ const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
-app.use(cors({ origin: allowedOrigins, credentials: true }));
+// maxAge lets browsers reuse a preflight for 2h (Chrome's cap). Without it
+// every API call from the web app paid an extra OPTIONS round trip first,
+// because the Authorization and JSON Content-Type headers always need one.
+app.use(cors({ origin: allowedOrigins, credentials: true, maxAge: 7200, exposedHeaders: ["Server-Timing"] }));
 
 app.use(express.json({ limit: "1mb" })); // Section 8.4
 app.use(cookieParser());

@@ -2,6 +2,7 @@ import { Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { AuthenticatedRequest } from "../middleware/auth";
+import { getOrSetCache } from "../lib/cache";
 import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
 
 const availabilitySchema = z.object({ status: z.enum(["AVAILABLE", "OFF_DUTY"]) });
@@ -33,20 +34,31 @@ export const updateAvailability = asyncHandler(async (req: AuthenticatedRequest,
 // single fixed value for the whole partition, which a bound param already
 // is; this is not string concatenation (Section 9 threat #4).
 export const getDemandHeatmap = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const worker = await prisma.workerProfile.findUnique({ where: { userId: req.user!.id } });
-  if (!worker) {
+  // Profile existence, service radius and current location come back in one
+  // query (previously two round trips). The computed clusters are cached for
+  // 60s per worker: this is a coarse demand overview polled on every
+  // dashboard visit, and the clustering runs three more queries.
+  const workerRows = await prisma.$queryRaw<{ id: string; serviceAreaRadiusKm: number; lng: number | null; lat: number | null }[]>`
+    SELECT id, "serviceAreaRadiusKm", ST_X("currentLocation") AS lng, ST_Y("currentLocation") AS lat
+    FROM worker_profiles WHERE "userId" = ${req.user!.id}
+  `;
+  if (workerRows.length === 0) {
     throw new AppError(404, "WORKER_PROFILE_NOT_FOUND", "Worker profile not found");
   }
-
-  const locationRows = await prisma.$queryRaw<{ lng: number; lat: number }[]>`
-    SELECT ST_X("currentLocation") AS lng, ST_Y("currentLocation") AS lat
-    FROM worker_profiles WHERE id = ${worker.id} AND "currentLocation" IS NOT NULL
-  `;
-  if (locationRows.length === 0) {
+  const worker = workerRows[0];
+  if (worker.lng === null || worker.lat === null) {
     return res.json([]);
   }
-  const { lng, lat } = locationRows[0];
+  const { lng, lat } = worker;
   const radiusMeters = worker.serviceAreaRadiusKm * 1000;
+
+  const cells = await getOrSetCache(`cache:demand-heatmap:${worker.id}:${lng}:${lat}:${radiusMeters}`, 60, () =>
+    computeDemandCells(lng, lat, radiusMeters)
+  );
+  return res.json(cells);
+});
+
+async function computeDemandCells(lng: number, lat: number, radiusMeters: number) {
 
   const countRows = await prisma.$queryRaw<{ count: bigint }[]>`
     SELECT COUNT(*) AS count
@@ -56,7 +68,7 @@ export const getDemandHeatmap = asyncHandler(async (req: AuthenticatedRequest, r
   `;
   const openCount = Number(countRows[0].count);
   if (openCount === 0) {
-    return res.json([]);
+    return [];
   }
   const k = Math.min(5, openCount);
 
@@ -84,40 +96,39 @@ export const getDemandHeatmap = asyncHandler(async (req: AuthenticatedRequest, r
     GROUP BY cluster_id
   `;
 
-  return res.json(
-    clusters.map((c) => ({
-      cellId: String(c.cellId),
-      centroid: { lat: c.lat, lng: c.lng },
-      openRequests: Number(c.openRequests),
-      avgUrgencyScore: Number(c.avgUrgencyScore)
-    }))
-  );
-});
+  return clusters.map((c) => ({
+    cellId: String(c.cellId),
+    centroid: { lat: c.lat, lng: c.lng },
+    openRequests: Number(c.openRequests),
+    avgUrgencyScore: Number(c.avgUrgencyScore)
+  }));
+}
 
 // Section 1.2.7 — read-only aggregation over the worker's own completed
 // jobs; no persistent write unless a WelfareAlert threshold is crossed
 // (Section 12.7's AuditLog hook is not wired here since no threshold-cross
 // event exists yet without a real-time job stream — PHASE 7/8 territory).
 export const getWelfare = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const worker = await prisma.workerProfile.findUnique({ where: { userId: req.user!.id } });
-  if (!worker) {
-    throw new AppError(404, "WORKER_PROFILE_NOT_FOUND", "Worker profile not found");
-  }
-
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const startOfWeek = new Date(startOfToday);
   startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
 
-  const completedJobs = await prisma.booking.findMany({
-    where: {
-      assignedWorkerId: worker.id,
-      status: { in: ["COMPLETED", "SETTLED"] },
-      startedAt: { not: null },
-      completedAt: { not: null }
-    },
-    select: { startedAt: true, completedAt: true }
-  });
+  const [worker, completedJobs] = await Promise.all([
+    prisma.workerProfile.findUnique({ where: { userId: req.user!.id }, select: { id: true } }),
+    prisma.booking.findMany({
+      where: {
+        assignedWorker: { userId: req.user!.id },
+        status: { in: ["COMPLETED", "SETTLED"] },
+        startedAt: { not: null },
+        completedAt: { not: null }
+      },
+      select: { startedAt: true, completedAt: true }
+    })
+  ]);
+  if (!worker) {
+    throw new AppError(404, "WORKER_PROFILE_NOT_FOUND", "Worker profile not found");
+  }
 
   function hoursWorkedSince(cutoff: Date): number {
     return completedJobs
@@ -144,19 +155,22 @@ export const getWelfare = asyncHandler(async (req: AuthenticatedRequest, res: Re
 });
 
 export const getIncentives = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const worker = await prisma.workerProfile.findUnique({ where: { userId: req.user!.id } });
-  if (!worker) {
-    throw new AppError(404, "WORKER_PROFILE_NOT_FOUND", "Worker profile not found");
-  }
-
   // Nothing else in the app ever transitions a row out of PENDING once its
   // deadline passes, so a self-heal here keeps status accurate without a
   // separate cron sweep — same read-time-freshness pattern used for OTP
   // expiry and wallet balance derivation elsewhere in this codebase.
-  await prisma.incentiveProgress.updateMany({
-    where: { workerProfileId: worker.id, status: "PENDING", expiry: { lt: new Date() } },
-    data: { status: "EXPIRED" }
-  });
+  // The profile check runs alongside the self-heal; the read must still
+  // wait for the self-heal so it sees the updated statuses.
+  const [worker] = await Promise.all([
+    prisma.workerProfile.findUnique({ where: { userId: req.user!.id }, select: { id: true } }),
+    prisma.incentiveProgress.updateMany({
+      where: { workerProfile: { userId: req.user!.id }, status: "PENDING", expiry: { lt: new Date() } },
+      data: { status: "EXPIRED" }
+    })
+  ]);
+  if (!worker) {
+    throw new AppError(404, "WORKER_PROFILE_NOT_FOUND", "Worker profile not found");
+  }
 
   const incentives = await prisma.incentiveProgress.findMany({
     where: { workerProfileId: worker.id },

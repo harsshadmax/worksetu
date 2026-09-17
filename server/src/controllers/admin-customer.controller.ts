@@ -5,6 +5,7 @@ import { AccountStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { AuthenticatedRequest } from "../middleware/auth";
 import { writeAuditLog } from "../lib/audit";
+import { invalidateAuthUser } from "../lib/auth-cache";
 import { dispatchNotification } from "../services/notification-dispatcher.service";
 import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
 import { paginationQuerySchema, paginate } from "../utils/pagination";
@@ -70,6 +71,8 @@ export const setCustomerStatus = asyncHandler(async (req: AuthenticatedRequest, 
       metadata: { reason, accountStatus: parsed.data.accountStatus }
     });
   });
+  // Suspension must lock the user out on their next request, not after the auth cache TTL.
+  invalidateAuthUser(customerProfile.userId);
 
   await dispatchNotification({
     userId: customerProfile.userId,

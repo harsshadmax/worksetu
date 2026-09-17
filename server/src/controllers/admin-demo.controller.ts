@@ -7,6 +7,7 @@ import { prisma } from "../lib/prisma";
 import { AuthenticatedRequest } from "../middleware/auth";
 import { asyncHandler, AppError } from "../utils/app-error";
 import { log } from "../lib/logger";
+import { clearAuthUserCache } from "../lib/auth-cache";
 
 const execFileAsync = promisify(execFile);
 const SERVER_ROOT = path.join(__dirname, "..", "..");
@@ -34,9 +35,15 @@ const SERVER_ROOT = path.join(__dirname, "..", "..");
 // a demo session are demo data too, per this section's own text, and are
 // wiped along with everything else).
 export const resetDemoData = asyncHandler(async (_req: AuthenticatedRequest, res: Response) => {
+  // The reseed deletes and recreates every user, so no cached auth state may
+  // outlive it (lib/auth-cache.ts). Cleared before and after: rows vanish
+  // during the run, and recreated rows must be re-read once it finishes.
+  clearAuthUserCache();
   try {
     await execFileAsync("npx", ["ts-node", "prisma/seed.ts"], { cwd: SERVER_ROOT, shell: true, timeout: 15 * 60 * 1000 });
+    clearAuthUserCache();
   } catch (err) {
+    clearAuthUserCache();
     log({ level: "error", message: `Demo data reset failed: ${err instanceof Error ? err.message : String(err)}` });
     throw new AppError(500, "DEMO_RESET_FAILED", "Demo data reset failed — see server logs");
   }

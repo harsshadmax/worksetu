@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { prisma } from "../lib/prisma";
 import { verifyAccessToken, Role } from "../lib/jwt";
 import { AppError, asyncHandler } from "../utils/app-error";
+import { getAuthUser } from "../lib/auth-cache";
 
 export interface AuthenticatedRequest extends Request {
   user?: { id: string; role: Role };
@@ -49,10 +50,14 @@ export function requireAuth(...allowedRoles: Role[]) {
       return next(new AppError(403, "FORBIDDEN_ROLE", "You do not have permission to access this resource"));
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: { id: true, role: true, tokenVersion: true, accountStatus: true, deletedAt: true }
-    });
+    // Cached for a few seconds (see lib/auth-cache.ts): this lookup ran on
+    // every authenticated request and was a fixed ~200ms database round trip.
+    const user = await getAuthUser(payload.sub, () =>
+      prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { id: true, role: true, tokenVersion: true, accountStatus: true, deletedAt: true }
+      })
+    );
     if (!user || user.deletedAt) {
       return next(new AppError(401, "INVALID_TOKEN", "Invalid authentication token"));
     }

@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import bcrypt from "bcrypt";
+import { invalidateAuthUser } from "../lib/auth-cache";
 import { Prisma, User, UserRole } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { signAccessToken, Role } from "../lib/jwt";
@@ -245,6 +246,7 @@ export async function refreshTokens(rawRefreshToken: string, meta: RequestMeta):
       prisma.refreshToken.updateMany({ where: { userId: existing.userId, revokedAt: null }, data: { revokedAt: new Date() } }),
       prisma.user.update({ where: { id: existing.userId }, data: { tokenVersion: { increment: 1 } } })
     ]);
+    invalidateAuthUser(existing.userId);
     throw new AppError(401, "REFRESH_TOKEN_REUSED", "Session invalidated due to suspicious activity, please log in again");
   }
 
@@ -291,6 +293,7 @@ export async function logoutAll(userId: string): Promise<void> {
     prisma.user.update({ where: { id: userId }, data: { tokenVersion: { increment: 1 } } }),
     prisma.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } })
   ]);
+  invalidateAuthUser(userId);
 }
 
 export async function requestPasswordReset(identifier: string): Promise<void> {
@@ -322,6 +325,7 @@ export async function confirmPasswordReset(rawToken: string, newPassword: string
     prisma.passwordResetToken.update({ where: { id: record.id }, data: { usedAt: new Date() } }),
     prisma.refreshToken.updateMany({ where: { userId: record.userId, revokedAt: null }, data: { revokedAt: new Date() } })
   ]);
+  invalidateAuthUser(record.userId);
 }
 
 export async function verifyOtp(userId: string, channel: "EMAIL" | "PHONE", code: string): Promise<void> {

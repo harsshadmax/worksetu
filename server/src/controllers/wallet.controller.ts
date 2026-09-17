@@ -7,10 +7,27 @@ import { asyncHandler, AppError, sendValidationError } from "../utils/app-error"
 import { deriveRedeemableBalance, derivePendingBalance, deriveDividendTotal } from "../utils/wallet-balance";
 
 export const getWallet = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-  const worker = await prisma.workerProfile.findUniqueOrThrow({
-    where: { userId: req.user!.id },
-    include: { cooperative: { select: { location: true, dividendSharePercent: true } } }
-  });
+  // The profile, balance rows and display list are independent reads; they
+  // used to run one after another (three database round trips).
+  const ownWorker = { workerProfile: { userId: req.user!.id } };
+  const [worker, balanceRows, transactions] = await Promise.all([
+    prisma.workerProfile.findUniqueOrThrow({
+      where: { userId: req.user!.id },
+      include: { cooperative: { select: { location: true, dividendSharePercent: true } } }
+    }),
+    prisma.creditTransaction.findMany({
+      where: {
+        ...ownWorker,
+        OR: [{ status: "COMPLETED" }, { status: "PROCESSING", type: "REDEMPTION" }]
+      },
+      select: { type: true, amount: true, status: true, createdAt: true }
+    }),
+    prisma.creditTransaction.findMany({
+      where: ownWorker,
+      orderBy: { createdAt: "desc" },
+      take: 50
+    })
+  ]);
 
   // Fix, not a literal transcription: the illustrative Section 4.7 code
   // derives availableBalance/pendingBalance from the same `take: 50` list
@@ -18,13 +35,6 @@ export const getWallet = asyncHandler(async (req: AuthenticatedRequest, res: Res
   // worker with more than 50 historical transactions. Balance is derived
   // (Section 1.2.4/13.3) from the full transaction set; only the display
   // list is capped.
-  const balanceRows = await prisma.creditTransaction.findMany({
-    where: {
-      workerProfileId: worker.id,
-      OR: [{ status: "COMPLETED" }, { status: "PROCESSING", type: "REDEMPTION" }]
-    },
-    select: { type: true, amount: true, status: true, createdAt: true }
-  });
   const normalizedRows = balanceRows.map((t) => ({ ...t, amount: Number(t.amount) }));
   const availableBalance = deriveRedeemableBalance(normalizedRows);
   const pendingBalance = derivePendingBalance(normalizedRows);
@@ -35,12 +45,6 @@ export const getWallet = asyncHandler(async (req: AuthenticatedRequest, res: Res
   const todayEarnings = normalizedRows
     .filter((t) => t.status === "COMPLETED" && t.type === "JOB_PAYOUT" && t.createdAt >= todayStart)
     .reduce((sum, t) => sum + t.amount, 0);
-
-  const transactions = await prisma.creditTransaction.findMany({
-    where: { workerProfileId: worker.id },
-    orderBy: { createdAt: "desc" },
-    take: 50
-  });
 
   return res.json({
     availableBalance,

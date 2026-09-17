@@ -404,9 +404,12 @@ const app = createApp({
         // wasted work -- only do it if that initial load hasn't landed yet.
         await Promise.all([loadOwnProfile(res.role), services.value.length === 0 ? loadCatalog() : Promise.resolve()]);
         currentView.value = "dashboard";
-        await initializeRoleData(currentRole.value);
         authEmail.value = "";
         authPassword.value = "";
+        // Show the dashboard as soon as the profile is in; its cards fill in
+        // as their requests land instead of holding the sign-in spinner until
+        // every one of them (up to five for a worker) has finished.
+        initializeRoleData(currentRole.value).catch(() => {});
       } catch (err) {
         loginError.value = apiErrorMessage(err);
       } finally {
@@ -674,16 +677,22 @@ const app = createApp({
     }
 
     const toggleAvailability = async () => {
-      const next = loggedInWorker.value.workerProfile.availabilityStatus === "AVAILABLE" ? "OFF_DUTY" : "AVAILABLE";
+      const profile = loggedInWorker.value.workerProfile;
+      const previous = profile.availabilityStatus;
+      const next = previous === "AVAILABLE" ? "OFF_DUTY" : "AVAILABLE";
+      // Flip the switch immediately and roll back if the server refuses
+      // (e.g. a suspended worker going AVAILABLE); waiting ~1-2s for the
+      // round trip made the toggle feel broken.
+      profile.availabilityStatus = next;
       try {
         await api.request("PATCH", "/workers/me/availability", { idempotencyKey: api.idempotencyKey(), body: { status: next } });
-        loggedInWorker.value.workerProfile.availabilityStatus = next;
         if (next === "AVAILABLE") startLocationPinging();
         else if (locationPingInterval) {
           clearInterval(locationPingInterval);
           locationPingInterval = null;
         }
       } catch (err) {
+        profile.availabilityStatus = previous;
         loginError.value = apiErrorMessage(err);
       }
     };
