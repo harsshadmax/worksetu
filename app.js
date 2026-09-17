@@ -282,6 +282,9 @@ const app = createApp({
       api.disconnectSocket();
       api.clearAccessToken();
       socketConnected.value = false;
+      stopOfferTicker();
+      clearToasts();
+      closeHeaderDropdowns();
       if (locationPingInterval) {
         clearInterval(locationPingInterval);
         locationPingInterval = null;
@@ -316,6 +319,8 @@ const app = createApp({
       }
       if (view === "myBookings") loadCustomerBookings();
       if (view === "orders") loadWorkerBookings();
+      if (view === "requests") loadWorkerIncoming();
+      if (view === "cooperative") loadWallet();
       if (view === "earnings") loadWallet();
       if (view === "incentives") loadIncentives();
       if (view === "map") loadDemandHeatmap();
@@ -484,29 +489,39 @@ const app = createApp({
       requestForm.value.location = loggedInCustomer.value?.customerProfile?.defaultAddress || "";
       requestForm.value.description = "";
       requestForm.value.datetime = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 16);
+      previewService.value = null;
+      requestStep.value = 1;
       navigateTo("requestForm");
     };
 
     const handleRequestSubmit = async () => {
-      const { lat, lng } = await getCoordinates();
-      const res = await api.request("POST", "/bookings/request", {
-        idempotencyKey: api.idempotencyKey(),
-        body: {
-          serviceCategoryId: requestForm.value.serviceId,
-          location: { address: requestForm.value.location, lat, lng },
-          description: requestForm.value.description || "General maintenance requested",
-          scheduledAt: null,
-          urgency: requestForm.value.urgency
-        }
-      }).catch((err) => {
-        loginError.value = apiErrorMessage(err);
-        return null;
-      });
-      if (!res) return;
+      if (isSubmittingRequest.value) return;
+      isSubmittingRequest.value = true;
+      try {
+        const { lat, lng } = await getCoordinates();
+        const res = await api.request("POST", "/bookings/request", {
+          idempotencyKey: api.idempotencyKey(),
+          body: {
+            serviceCategoryId: requestForm.value.serviceId,
+            location: { address: requestForm.value.location, lat, lng },
+            description: requestForm.value.description || "General maintenance requested",
+            scheduledAt: null,
+            urgency: requestForm.value.urgency
+          }
+        }).catch((err) => {
+          showToast(t("actionFailedToast"), apiErrorMessage(err), "error", 5000);
+          return null;
+        });
+        if (!res) return;
 
-      activeBookingId.value = res.bookingId;
-      await refreshActiveBooking();
-      navigateTo("matching");
+        activeBookingId.value = res.bookingId;
+        // The matching/confirmation screens read service + description from the
+        // list summary, which GET /bookings/:id doesn't include.
+        await Promise.all([refreshActiveBooking(), loadCustomerBookings()]);
+        navigateTo("matching");
+      } finally {
+        isSubmittingRequest.value = false;
+      }
     };
 
     async function refreshActiveBooking() {
@@ -542,7 +557,12 @@ const app = createApp({
     };
 
     const cancelBooking = async (bookingId, reason) => {
-      await api.request("POST", `/bookings/${bookingId}/cancel`, { body: { reason: reason || undefined } });
+      try {
+        await api.request("POST", `/bookings/${bookingId}/cancel`, { body: { reason: reason || undefined } });
+        showToast(t("bookingCancelledToast"), "", "success");
+      } catch (err) {
+        showToast(t("actionFailedToast"), apiErrorMessage(err), "error", 5000);
+      }
       await Promise.all([refreshActiveBooking(), loadCustomerBookings()]);
     };
 
@@ -762,7 +782,7 @@ const app = createApp({
 
     const setAdminTab = (tab) => {
       adminTab.value = tab;
-      if (tab === "dashboard") loadAdminDashboard();
+      if (tab === "dashboard") Promise.all([loadAdminDashboard(), loadAdminDispatchActive(), loadAdminBookings()]);
       else if (tab === "requests") loadAdminBookings();
       else if (tab === "monitoring") loadAdminDispatchActive();
       else if (tab === "liveWorkers") loadAdminLiveWorkers();
@@ -772,13 +792,15 @@ const app = createApp({
       else if (tab === "bookings") loadAdminBookingsLedger();
       else if (tab === "reports") loadAdminReports();
       else if (tab === "audit") loadAdminAuditLogs();
-      else if (tab === "settings") loadAdminConfig();
+      else if (tab === "settings") Promise.all([loadAdminConfig(), adminWorkers.value.length === 0 ? loadAdminWorkers() : null]);
     };
 
     const openRequestDetails = async (request) => {
       selectedRequest.value = { ...request, dispatchLog: await api.request("GET", `/admin/bookings/${request.id}/dispatch-log`).catch(() => []) };
       forceAssignForm.value = { workerId: "", reason: "" };
       forceAssignError.value = "";
+      adminCancelReason.value = "";
+      if (adminWorkers.value.length === 0) loadAdminWorkers();
     };
     const submitForceAssign = async () => {
       forceAssignError.value = "";
@@ -820,7 +842,10 @@ const app = createApp({
       await loadAdminWorkers();
     };
 
-    const openCustomerDetails = (customer) => (selectedCustomer.value = customer);
+    const openCustomerDetails = (customer) => {
+      selectedCustomer.value = customer;
+      customerStatusReason.value = "";
+    };
     const setCustomerStatus = async (accountStatus, reason) => {
       if (!reason || !reason.trim()) return;
       await api.request("PATCH", `/admin/customers/${selectedCustomer.value.id}/status`, { body: { accountStatus, reason } });
@@ -927,7 +952,14 @@ const app = createApp({
     // for status/verification; search is applied client-side over the
     // current page for responsiveness)
     // ----------------------------------------------------
-    const filteredWorkers = computed(() => adminWorkers.value.filter((w) => w.name.toLowerCase().includes(workerSearch.value.toLowerCase())));
+    const filteredWorkers = computed(() =>
+      adminWorkers.value.filter(
+        (w) =>
+          w.name.toLowerCase().includes(workerSearch.value.toLowerCase()) &&
+          (!workerFilterAvailability.value || w.availabilityStatus === workerFilterAvailability.value) &&
+          (!workerFilterCoop.value || w.cooperativeName === workerFilterCoop.value)
+      )
+    );
     const filteredCustomers = computed(() => adminCustomers.value.filter((c) => c.name.toLowerCase().includes(customerSearch.value.toLowerCase())));
 
     // ----------------------------------------------------
@@ -1058,6 +1090,8 @@ const app = createApp({
     onUnmounted(() => {
       if (locationPingInterval) clearInterval(locationPingInterval);
       if (candidatePollInterval) clearInterval(candidatePollInterval);
+      stopOfferTicker();
+      clearToasts();
     });
 
     // React to role switches by loading that role's dashboard data.
@@ -1081,17 +1115,18 @@ const app = createApp({
         // resync never actually ran on reload for the customer role, only
         // on explicit navigation). Mirrors the worker branch below, which
         // already restores its own active-job state on reload.
-        await Promise.all([loadCustomerBookings(), refreshActiveBooking()]);
+        await Promise.all([loadCustomerBookings(), refreshActiveBooking(), loadNotifications()]);
       } else if (role === "worker" && loggedInWorker.value) {
         // loadWallet/loadDemandHeatmap already existed for the separate
         // Earnings/Map & Demand pages (only triggered when navigating to
         // them) -- also loading them here so the dashboard's own earnings/
         // dividends/service-area-demand cards have real data immediately,
         // without a second nav-triggered fetch.
-        await Promise.all([loadWorkerIncoming(), loadWorkerActiveJob(), loadWallet(), loadDemandHeatmap()]);
+        await Promise.all([loadWorkerIncoming(), loadWorkerActiveJob(), loadWallet(), loadDemandHeatmap(), loadNotifications()]);
         if (loggedInWorker.value.workerProfile.availabilityStatus === "AVAILABLE") startLocationPinging();
       } else if (role === "admin" && loggedInAdmin.value) {
         setAdminTab("dashboard");
+        loadNotifications();
       }
     }
 
@@ -1181,6 +1216,617 @@ const app = createApp({
           if (!hasAnimatedOnce.value) triggerStatsAnimation();
         }, 1500);
       }, 150);
+    };
+
+    // ====================================================
+    // Round-2 UI layer: presentational state and view-models derived from the
+    // API-backed refs above. Nothing below fabricates data or calls an
+    // endpoint that the handlers above don't already call.
+    // ====================================================
+
+    // ---------------- Session helpers ----------------
+    const currentActiveUser = computed(() => {
+      if (currentRole.value === "customer") return loggedInCustomer.value;
+      if (currentRole.value === "worker") return loggedInWorker.value;
+      if (currentRole.value === "admin") return loggedInAdmin.value;
+      return loggedInCustomer.value || loggedInWorker.value || loggedInAdmin.value || null;
+    });
+
+    // ---------------- Toasts ----------------
+    const toasts = ref([]);
+    const toastTimers = new Map();
+    const dismissToast = (id) => {
+      if (toastTimers.has(id)) {
+        clearTimeout(toastTimers.get(id));
+        toastTimers.delete(id);
+      }
+      toasts.value = toasts.value.filter((toast) => toast.id !== id);
+    };
+    const showToast = (title, message = "", type = "info", duration = 3500) => {
+      const id = Date.now() + Math.random();
+      toasts.value.push({ id, title, message, type });
+      toastTimers.set(id, setTimeout(() => dismissToast(id), duration));
+    };
+    function clearToasts() {
+      toastTimers.forEach((timer) => clearTimeout(timer));
+      toastTimers.clear();
+      toasts.value = [];
+    }
+
+    // ---------------- Header dropdowns ----------------
+    const isNotificationDropdownOpen = ref(false);
+    const isProfileMenuOpen = ref(false);
+    const toggleNotifications = () => {
+      isNotificationDropdownOpen.value = !isNotificationDropdownOpen.value;
+      if (isNotificationDropdownOpen.value) {
+        isProfileMenuOpen.value = false;
+        if (currentActiveUser.value) loadNotifications();
+      }
+    };
+    const toggleProfileMenu = () => {
+      isProfileMenuOpen.value = !isProfileMenuOpen.value;
+      if (isProfileMenuOpen.value) isNotificationDropdownOpen.value = false;
+    };
+    const closeHeaderDropdowns = () => {
+      isNotificationDropdownOpen.value = false;
+      isProfileMenuOpen.value = false;
+    };
+
+    // ---------------- Service catalog ----------------
+    const serviceSearchQuery = ref("");
+    const selectedServiceCategory = ref("all");
+    const previewService = ref(null);
+    const SERVICE_CATEGORY_MEMBERS = {
+      repairs: ["plumbing", "electrical", "carpentry", "painting"],
+      cleaning: ["cleaning"],
+      care: ["caregiving", "domesticHelp"],
+      outdoor: ["gardening"]
+    };
+    const serviceCategories = computed(() => [
+      { id: "all", label: t("categoryAll"), icon: "fa-solid fa-border-all" },
+      { id: "repairs", label: t("categoryRepairs"), icon: "fa-solid fa-wrench" },
+      { id: "cleaning", label: t("categoryCleaning"), icon: "fa-solid fa-broom" },
+      { id: "care", label: t("categoryCare"), icon: "fa-solid fa-heart" },
+      { id: "outdoor", label: t("categoryOutdoor"), icon: "fa-solid fa-seedling" }
+    ]);
+    const getServiceDescription = (serviceId) => {
+      const key = "serviceDesc_" + serviceId;
+      const text = t(key);
+      return text === key ? t("serviceDescFallback") : text;
+    };
+    const filteredServices = computed(() => {
+      let list = services.value || [];
+      const members = SERVICE_CATEGORY_MEMBERS[selectedServiceCategory.value];
+      if (members) list = list.filter((svc) => members.includes(svc.id));
+      const query = serviceSearchQuery.value.trim().toLowerCase();
+      if (query) {
+        list = list.filter((svc) =>
+          [t(svc.translationKey), svc.id, getServiceDescription(svc.id)].some((text) => String(text).toLowerCase().includes(query))
+        );
+      }
+      return list;
+    });
+    const openServicePreview = (svc) => {
+      previewService.value = svc;
+    };
+    const closeServicePreview = () => {
+      previewService.value = null;
+    };
+
+    const recentServices = computed(() => {
+      const seen = new Set();
+      const recent = [];
+      for (const booking of customerBookings.value) {
+        if (seen.has(booking.serviceCategoryId)) continue;
+        seen.add(booking.serviceCategoryId);
+        recent.push({
+          id: booking.serviceCategoryId,
+          label: getServiceName(booking.serviceCategoryId),
+          when: new Intl.DateTimeFormat(localeTag(), { dateStyle: "medium" }).format(new Date(booking.createdAt))
+        });
+        if (recent.length === 3) break;
+      }
+      return recent;
+    });
+    const selectRecentService = (serviceId) => {
+      const svc = services.value.find((s) => s.id === serviceId);
+      if (svc) openServicePreview(svc);
+    };
+
+    // Service illustration SVGs (static markup from the round-2 design)
+    const serviceSvgMap = {
+      plumbing: `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-7 h-7">
+        <path d="M4 15h6v4H4z" fill="#93C5FD"/>
+        <path d="M4 13.5h2.5v7H4z" fill="#60A5FA"/>
+        <path d="M8 15h6a3 3 0 013 3v2h-4v-2a1 1 0 00-1-1H8v-2z" fill="#2563EB"/>
+        <rect x="9.5" y="8" width="5" height="2.5" rx="1" fill="#1D4ED8"/>
+        <rect x="8" y="7" width="8" height="2" rx="1" fill="#60A5FA"/>
+        <circle cx="12" cy="8" r="0.6" fill="#FFFFFF"/>
+        <path d="M13 17h4a2 2 0 012 2v2h-3.5a1 1 0 01-1-1v-2a1 1 0 00-1-1h-.5z" fill="#1D4ED8"/>
+        <rect x="15.5" y="20.5" width="4" height="1.5" rx="0.75" fill="#60A5FA"/>
+        <path d="M17.5 24c0 0-1.8 1.8-1.8 2.8a1.8 1.8 0 003.6 0c0-1-1.8-2.8-1.8-2.8z" fill="#38BDF8"/>
+        <circle cx="18" cy="26.3" r="0.4" fill="#FFFFFF"/>
+        <path d="M22 8l4 4-2 2-1.5-1.5-3 3 1.5 1.5-2 2-4-4 2-2 1.5 1.5 3-3L20 10l2-2z" fill="#93C5FD" opacity="0.85"/>
+        <circle cx="24.5" cy="10.5" r="0.9" fill="#FFFFFF"/>
+      </svg>`,
+
+      electrical: `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-7 h-7">
+        <rect x="5" y="16" width="9" height="9" rx="2" fill="#1D4ED8"/>
+        <rect x="6.5" y="14" width="6" height="2" rx="0.5" fill="#60A5FA"/>
+        <rect x="6.5" y="9" width="1.8" height="5" rx="0.5" fill="#93C5FD"/>
+        <rect x="10.7" y="9" width="1.8" height="5" rx="0.5" fill="#93C5FD"/>
+        <circle cx="7.4" cy="11" r="0.4" fill="#1D4ED8"/>
+        <circle cx="11.6" cy="11" r="0.4" fill="#1D4ED8"/>
+        <path d="M9.5 25v2.5a2 2 0 002 2h3" stroke="#93C5FD" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M22 3.5l-7.5 11.5h5.5l-3.5 12.5 11-14.5h-6l4-9.5z" fill="#2563EB"/>
+        <path d="M21 5.5l-5.5 8.5h4.5l-2.5 9 8-11h-4.8l2.8-6.5z" fill="#60A5FA"/>
+        <circle cx="20.5" cy="8.5" r="0.75" fill="#FFFFFF"/>
+      </svg>`,
+
+      carpentry: `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-7 h-7">
+        <rect x="4" y="21" width="24" height="6" rx="2" fill="#DBEAFE"/>
+        <path d="M7 24h18" stroke="#93C5FD" stroke-width="1" stroke-dasharray="3 2"/>
+        <path d="M13 6.5l4.8-3.2 2.4 3.4-1.8 1.2 3.8 5.4-2.6 1.8-3.8-5.4-1.4 1-2.4-3.4 1-.8z" fill="#1D4ED8"/>
+        <path d="M18.2 3.1l2.4 3.4-0.8 0.5-2.4-3.4 0.8-0.5z" fill="#60A5FA"/>
+        <path d="M13 6.5c-1.8 0-3.6 1.3-4.5 3 1.3-.4 2.7-.4 4 0l.5-3z" fill="#60A5FA"/>
+        <path d="M16.2 12.8l8.2 11.6a1.5 1.5 0 01-2.5 1.8l-8.2-11.6 2.5-1.8z" fill="#2563EB"/>
+        <rect x="21.5" y="22" width="3" height="3" rx="1" fill="#60A5FA"/>
+        <path d="M8 17.5v3.5" stroke="#60A5FA" stroke-width="1.8" stroke-linecap="round"/>
+        <circle cx="8" cy="17" r="1.1" fill="#1D4ED8"/>
+      </svg>`,
+
+      painting: `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-7 h-7">
+        <rect x="6" y="4" width="16" height="5" rx="2" fill="#DBEAFE"/>
+        <rect x="7" y="5" width="14" height="6" rx="2.5" fill="#2563EB"/>
+        <rect x="9" y="6" width="10" height="2" rx="1" fill="#60A5FA"/>
+        <circle cx="8" cy="8" r="0.75" fill="#FFFFFF"/>
+        <path d="M21 8h3a1 1 0 011 1v5.5a1 1 0 01-1 1h-6v4" stroke="#1D4ED8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="16.5" y="19.5" width="3" height="7" rx="1.5" fill="#60A5FA"/>
+        <path d="M5 22l3-3 3.5 3.5-3 3H5v-3.5z" fill="#1D4ED8"/>
+        <path d="M8 19l2-2 1.5 1.5-2 2L8 19z" fill="#93C5FD"/>
+        <path d="M9.5 24.5l-2.5 2.5" stroke="#38BDF8" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="6" cy="27.5" r="1.2" fill="#38BDF8"/>
+        <circle cx="11" cy="27" r="0.75" fill="#60A5FA"/>
+      </svg>`,
+
+      caregiving: `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-7 h-7">
+        <path d="M16 8c-2.4-3.3-6.8-2.3-7.8 1.4-.9 3.8 4.3 8 7.8 11 3.4-3 8.7-7.2 7.8-11-.9-3.7-5.4-4.7-7.8-1.4z" fill="#2563EB"/>
+        <path d="M16 10.5c-1.8-2.4-5-1.7-5.7 1-.7 2.7 3.1 5.8 5.7 7.8 2.6-2 6.4-5.1 5.7-7.8-.7-2.7-3.9-3.4-5.7-1z" fill="#60A5FA" opacity="0.65"/>
+        <path d="M5 20c2 1.2 5 0.8 7-1l4 4-2.5 3c-4 1-7-1-9-3l.5-3z" fill="#60A5FA"/>
+        <path d="M27 20c-2 1.2-5 0.8-7-1l-4 4 2.5 3c4 1 7-1 9-3l-.5-3z" fill="#1D4ED8"/>
+        <rect x="15" y="11" width="2" height="5.5" rx="0.5" fill="#FFFFFF"/>
+        <rect x="13.25" y="12.75" width="5.5" height="2" rx="0.5" fill="#FFFFFF"/>
+      </svg>`,
+
+      gardening: `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-7 h-7">
+        <path d="M4 27c3-2 8-2 12 0 4-2 9-2 12 0H4z" fill="#DBEAFE"/>
+        <path d="M6 26c3-1.5 7-1.5 10 0" stroke="#93C5FD" stroke-width="1" stroke-linecap="round"/>
+        <path d="M14 26c0-7 2-12 5-15" stroke="#1D4ED8" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M16 19c-4 0-7-2-8-6 4-1 8 1 8 6z" fill="#60A5FA"/>
+        <path d="M12 16c2 1 4 2 4 3" stroke="#FFFFFF" stroke-width="0.8" stroke-linecap="round"/>
+        <path d="M19 11c1-4 4-6 8-6 0 4-3 7-8 6z" fill="#2563EB"/>
+        <path d="M22 8c-1 2-2 3-3 3" stroke="#93C5FD" stroke-width="0.8" stroke-linecap="round"/>
+        <path d="M23 16l3 3-5 5-2-1 4-7z" fill="#2563EB"/>
+        <path d="M24 21l3 3" stroke="#1D4ED8" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="26.5" cy="23.5" r="0.6" fill="#FFFFFF"/>
+      </svg>`,
+
+      cleaning: `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-7 h-7">
+        <path d="M6 13.5L14 6.5l8 7V24a2 2 0 01-2 2H8a2 2 0 01-2-2V13.5z" fill="#DBEAFE"/>
+        <path d="M4 15L14 6.5 24 15" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="11.5" y="13.5" width="5" height="5" rx="1" fill="#FFFFFF"/>
+        <line x1="14" y1="13.5" x2="14" y2="18.5" stroke="#93C5FD" stroke-width="0.8"/>
+        <line x1="11.5" y1="16" x2="16.5" y2="16" stroke="#93C5FD" stroke-width="0.8"/>
+        <line x1="28" y1="9" x2="19" y2="21" stroke="#1D4ED8" stroke-width="2" stroke-linecap="round"/>
+        <path d="M18 20.5l3.5 2-2.5 5.5a1.5 1.5 0 01-2.5-.5L18 20.5z" fill="#2563EB"/>
+        <path d="M17.5 22.5l3 1.8" stroke="#60A5FA" stroke-width="1.2"/>
+        <path d="M26 3.5l.8 1.8 1.8.8-1.8.8-.8 1.8-.8-1.8-1.8-.8 1.8-.8.8-1.8z" fill="#38BDF8"/>
+        <path d="M7 6.5l.5 1.2 1.2.5-1.2.5-.5 1.2-.5-1.2-1.2-.5 1.2-.5.5-1.2z" fill="#60A5FA"/>
+        <circle cx="28.5" cy="18" r="0.75" fill="#38BDF8"/>
+      </svg>`,
+
+      domestichelp: `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-7 h-7">
+        <path d="M4 22h24a1 1 0 011 1v1H3v-1a1 1 0 011-1z" fill="#1D4ED8"/>
+        <rect x="6" y="24" width="20" height="2" rx="1" fill="#60A5FA"/>
+        <path d="M6 21a10 10 0 0120 0H6z" fill="#2563EB"/>
+        <circle cx="16" cy="10" r="2" fill="#60A5FA"/>
+        <rect x="15" y="11" width="2" height="1" fill="#1D4ED8"/>
+        <path d="M9 19a7 7 0 016-7" stroke="#93C5FD" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M13 6.5c0-1.5 1-2 1-3" stroke="#38BDF8" stroke-width="1.2" stroke-linecap="round"/>
+        <path d="M16 5.5c0-1.5 1-2 1-3" stroke="#93C5FD" stroke-width="1.2" stroke-linecap="round"/>
+        <path d="M19 6.5c0-1.5 1-2 1-3" stroke="#38BDF8" stroke-width="1.2" stroke-linecap="round"/>
+      </svg>`,
+
+      appliance: `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-7 h-7">
+        <rect x="5" y="8" width="16" height="18" rx="2" fill="#DBEAFE"/>
+        <rect x="7" y="11" width="12" height="7" rx="1" fill="#2563EB"/>
+        <circle cx="9" cy="14.5" r="1.5" fill="#FFFFFF"/>
+        <rect x="13" y="13" width="4" height="3" rx="0.5" fill="#60A5FA"/>
+        <circle cx="10" cy="22" r="1.5" fill="#1D4ED8"/>
+        <circle cx="16" cy="22" r="1.5" fill="#1D4ED8"/>
+        <path d="M22 6l5 5-2.5 2.5-1.5-1.5-3 3 1.5 1.5-2.5 2.5-5-5 2.5-2.5 1.5 1.5 3-3-1.5-1.5L22 6z" fill="#2563EB"/>
+        <path d="M23 7l2 2-1 1-2-2 1-1z" fill="#60A5FA"/>
+      </svg>`,
+
+      ac: `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-7 h-7">
+        <rect x="4" y="6" width="24" height="11" rx="2" fill="#2563EB"/>
+        <rect x="7" y="9" width="18" height="2" rx="0.5" fill="#93C5FD"/>
+        <rect x="22" y="13" width="3" height="1.5" rx="0.5" fill="#38BDF8"/>
+        <path d="M6 17h20v2a1 1 0 01-1 1H7a1 1 0 01-1-1v-2z" fill="#1D4ED8"/>
+        <path d="M10 23c2 2 4 2 6 0s4-2 6 0" stroke="#38BDF8" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M8 26c2 2 4 2 6 0s4-2 6 0" stroke="#60A5FA" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="16" cy="28" r="0.75" fill="#93C5FD"/>
+      </svg>`,
+
+      pestcontrol: `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-7 h-7">
+        <path d="M16 4l10 4v8c0 6-4.5 11-10 13-5.5-2-10-7-10-13V8l10-4z" fill="#2563EB"/>
+        <path d="M16 6.5l7.5 3v6c0 4.5-3.5 8.5-7.5 10-4-1.5-7.5-5.5-7.5-10v-6l7.5-3z" fill="#60A5FA" opacity="0.6"/>
+        <circle cx="16" cy="15" r="4" stroke="#FFFFFF" stroke-width="1.5"/>
+        <line x1="16" y1="9" x2="16" y2="21" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="10" y1="15" x2="22" y2="15" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="16" cy="15" r="1.5" fill="#FFFFFF"/>
+      </svg>`,
+
+      moving: `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-7 h-7">
+        <path d="M6 13l10-5 10 5v11a2 2 0 01-2 2H8a2 2 0 01-2-2V13z" fill="#2563EB"/>
+        <path d="M6 13l10 5 10-5" stroke="#1D4ED8" stroke-width="1.5"/>
+        <path d="M16 18v9" stroke="#1D4ED8" stroke-width="1.5"/>
+        <path d="M12 10.5l4 2 4-2" stroke="#93C5FD" stroke-width="1.5"/>
+        <rect x="13.5" y="14" width="5" height="4" rx="0.5" fill="#60A5FA"/>
+        <circle cx="25" cy="27" r="2.5" fill="#1D4ED8"/>
+        <circle cx="25" cy="27" r="1" fill="#FFFFFF"/>
+      </svg>`,
+
+      default: `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-7 h-7">
+        <rect x="5" y="10" width="22" height="16" rx="3" fill="#2563EB"/>
+        <path d="M11 10V7a2 2 0 012-2h6a2 2 0 012 2v3" stroke="#1D4ED8" stroke-width="2" stroke-linecap="round"/>
+        <rect x="5" y="15" width="22" height="3" fill="#1D4ED8"/>
+        <rect x="13" y="14" width="6" height="5" rx="1" fill="#60A5FA"/>
+        <circle cx="16" cy="16.5" r="1" fill="#FFFFFF"/>
+      </svg>`
+    };
+
+    // Aliases for common icon or category identifiers
+    serviceSvgMap.wrench = serviceSvgMap.plumbing;
+    serviceSvgMap.zap = serviceSvgMap.electrical;
+    serviceSvgMap.bolt = serviceSvgMap.electrical;
+    serviceSvgMap.hammer = serviceSvgMap.carpentry;
+    serviceSvgMap["paint-brush"] = serviceSvgMap.painting;
+    serviceSvgMap.paintbrush = serviceSvgMap.painting;
+    serviceSvgMap.heart = serviceSvgMap.caregiving;
+    serviceSvgMap.flower = serviceSvgMap.gardening;
+    serviceSvgMap.sparkles = serviceSvgMap.cleaning;
+    serviceSvgMap.utensils = serviceSvgMap.domestichelp;
+    serviceSvgMap.cooling = serviceSvgMap.ac;
+
+    const getServiceSvg = (serviceId) => {
+      if (!serviceId) return serviceSvgMap.default;
+      const key = String(serviceId).toLowerCase().replace(/[\s_-]/g, "");
+      return serviceSvgMap[key] || serviceSvgMap[String(serviceId).toLowerCase()] || serviceSvgMap.default;
+    };
+
+    // ---------------- Multi-step request wizard ----------------
+    const requestStep = ref(1);
+    const isSubmittingRequest = ref(false);
+    const canContinueRequestStep = computed(() => {
+      if (requestStep.value === 1) return !!requestForm.value.serviceId;
+      if (requestStep.value === 2) return !!requestForm.value.datetime;
+      if (requestStep.value === 3) return !!requestForm.value.location && requestForm.value.location.trim().length >= 3;
+      return true;
+    });
+    const nextRequestStep = () => {
+      if (!canContinueRequestStep.value) {
+        showToast(t("stepIncompleteToast"), "", "warning", 2500);
+        return;
+      }
+      if (requestStep.value < 4) requestStep.value++;
+    };
+    const prevRequestStep = () => {
+      if (requestStep.value > 1) requestStep.value--;
+      else navigateTo("dashboard");
+    };
+    const goToRequestStep = (step) => {
+      const f = requestForm.value;
+      if (step === 1) requestStep.value = 1;
+      else if (step === 2 && f.serviceId) requestStep.value = 2;
+      else if (step === 3 && f.serviceId && f.datetime) requestStep.value = 3;
+      else if (step === 4 && f.serviceId && f.datetime && f.location) requestStep.value = 4;
+    };
+    // datetime-local inputs take local wall-clock time, not UTC.
+    const toLocalInputValue = (date) => {
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    };
+    const setQuickDatePreset = (preset) => {
+      const d = new Date();
+      if (preset === "today_2h") d.setHours(d.getHours() + 2);
+      else if (preset === "tomorrow_morning") {
+        d.setDate(d.getDate() + 1);
+        d.setHours(9, 0, 0, 0);
+      } else if (preset === "tomorrow_evening") {
+        d.setDate(d.getDate() + 1);
+        d.setHours(16, 0, 0, 0);
+      }
+      requestForm.value.datetime = toLocalInputValue(d);
+    };
+    // No reverse-geocoding service exists, so this fills the device's real
+    // coordinates (or getCoordinates' documented demo fallback) rather than
+    // inventing a street address.
+    const useCurrentLocation = async () => {
+      const { lat, lng } = await getCoordinates();
+      requestForm.value.location = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      showToast(t("locationDetectedToast"), requestForm.value.location, "success", 3000);
+    };
+
+    const activeBookingSummary = computed(() => customerBookings.value.find((b) => b.id === activeBookingId.value) || null);
+    const customerBookingSearch = ref("");
+    const filteredCustomerBookings = computed(() => {
+      const query = customerBookingSearch.value.trim().toLowerCase();
+      if (!query) return customerBookings.value;
+      return customerBookings.value.filter((b) =>
+        [b.id, b.description, b.workerName || "", getServiceName(b.serviceCategoryId), stageLabel(b.status)].some((text) => String(text).toLowerCase().includes(query))
+      );
+    });
+
+    // Display-only candidate card expansion (customer matching) and admin worker row expansion.
+    const expandedWorkerId = ref(null);
+    const toggleExpandWorker = (id) => {
+      expandedWorkerId.value = expandedWorkerId.value === id ? null : id;
+    };
+
+    // ---------------- Worker ----------------
+    const availabilityBusy = ref(false);
+    const toggleAvailabilityWithFeedback = async () => {
+      if (availabilityBusy.value) return;
+      availabilityBusy.value = true;
+      loginError.value = "";
+      try {
+        await toggleAvailability();
+        if (loginError.value) showToast(t("actionFailedToast"), loginError.value, "error");
+      } finally {
+        availabilityBusy.value = false;
+      }
+    };
+
+    const jobActionBusy = ref(false);
+    const runJobAction = async (action) => {
+      if (jobActionBusy.value) return;
+      jobActionBusy.value = true;
+      loginError.value = "";
+      try {
+        await action();
+        if (loginError.value) showToast(t("actionFailedToast"), loginError.value, "error");
+      } finally {
+        jobActionBusy.value = false;
+      }
+    };
+
+    const offerBusy = reactive({});
+    const respondToOffer = async (dispatchLogId, response) => {
+      if (offerBusy[dispatchLogId]) return;
+      offerBusy[dispatchLogId] = response;
+      loginError.value = "";
+      try {
+        if (response === "ACCEPT") await handleWorkerAccept(dispatchLogId);
+        else await handleWorkerReject(dispatchLogId);
+        if (loginError.value) showToast(t("actionFailedToast"), loginError.value, "error");
+        else if (response === "ACCEPT") showToast(t("offerAcceptedToast"), "", "success");
+      } finally {
+        delete offerBusy[dispatchLogId];
+      }
+    };
+
+    // One 1s ticker drives the offer countdowns (display only — the server
+    // enforces expiry). It only runs while offers are on screen and is torn
+    // down on logout/expiry/unmount.
+    const nowTick = ref(Date.now());
+    let offerTickInterval = null;
+    function stopOfferTicker() {
+      if (offerTickInterval) {
+        clearInterval(offerTickInterval);
+        offerTickInterval = null;
+      }
+    }
+    watch(
+      () => workerIncoming.value.length,
+      (count) => {
+        if (count > 0 && !offerTickInterval) {
+          nowTick.value = Date.now();
+          offerTickInterval = setInterval(() => (nowTick.value = Date.now()), 1000);
+        } else if (count === 0) stopOfferTicker();
+      }
+    );
+    const offerSecondsLeft = (job) => Math.max(0, Math.round((new Date(job.offerExpiresAt).getTime() - nowTick.value) / 1000));
+
+    const workerJobStageIndex = (status) => ({ ASSIGNED: 0, CONFIRMED: 0, IN_PROGRESS: 1, COMPLETED: 2, SETTLED: 2 })[status] ?? 0;
+
+    const workerOrderStatusFilter = ref("");
+    const ORDER_FILTER_STATUSES = { ACTIVE: ["ASSIGNED", "CONFIRMED", "IN_PROGRESS"], DONE: ["COMPLETED", "SETTLED"], CANCELLED: ["CANCELLED"] };
+    const filteredWorkerBookings = computed(() => {
+      const allowed = ORDER_FILTER_STATUSES[workerOrderStatusFilter.value];
+      return allowed ? workerBookings.value.filter((b) => allowed.includes(b.status)) : workerBookings.value;
+    });
+
+    const earningsFilterType = ref("");
+    const earningsFilterStatus = ref("");
+    const showFilterDrawer = ref(false);
+    const filteredTransactions = computed(() =>
+      walletInfo.value.transactions.filter(
+        (tx) => (!earningsFilterType.value || tx.type === earningsFilterType.value) && (!earningsFilterStatus.value || tx.status === earningsFilterStatus.value)
+      )
+    );
+    const txnTypeLabel = (type) => {
+      const key = "txnType_" + type;
+      const text = t(key);
+      return text === key ? type : text;
+    };
+    // "today" uses the server's figure (computed over the full ledger); week/
+    // month are derived from the latest transactions the wallet endpoint returns.
+    const earningsPeriodTotal = computed(() => {
+      if (earningsTab.value === "today") return walletInfo.value.todayEarnings;
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      if (earningsTab.value === "week") start.setDate(start.getDate() - start.getDay());
+      else start.setDate(1);
+      return walletInfo.value.transactions
+        .filter((tx) => tx.type === "JOB_PAYOUT" && tx.status === "COMPLETED" && new Date(tx.createdAt) >= start)
+        .reduce((sum, tx) => sum + Number(tx.amount), 0);
+    });
+    const redemptionHistory = computed(() => walletInfo.value.transactions.filter((tx) => tx.type === "REDEMPTION"));
+
+    const selectedIncentive = ref(null);
+    const incentiveStatusLabel = (status) => t("incentiveStatus" + status.charAt(0) + status.slice(1).toLowerCase());
+    const verificationLabel = (status) => t("verification" + status.charAt(0) + status.slice(1).toLowerCase());
+    const AVAILABILITY_KEY = { AVAILABLE: "available", ON_JOB: "statusOnJob", TRAVELLING: "statusTravelling", OFF_DUTY: "statusOffDuty" };
+    const availabilityLabel = (status) => t(AVAILABILITY_KEY[status] || status);
+
+    const selectedMapZone = ref(null);
+    const selectMapZone = (cell) => {
+      selectedMapZone.value = selectedMapZone.value && selectedMapZone.value.cellId === cell.cellId ? null : cell;
+    };
+    // Projects real lat/lng into a 0-100% box, preserving relative position only.
+    function projectPoints(items, getLat, getLng, minPct, maxPct) {
+      const withCoords = items.filter((item) => getLat(item) !== null && getLat(item) !== undefined && getLng(item) !== null && getLng(item) !== undefined);
+      if (withCoords.length === 0) return [];
+      const lats = withCoords.map(getLat);
+      const lngs = withCoords.map(getLng);
+      const [minLat, maxLat, minLng, maxLng] = [Math.min(...lats), Math.max(...lats), Math.min(...lngs), Math.max(...lngs)];
+      const scale = (value, min, max) => (max - min < 1e-9 ? 0.5 : (value - min) / (max - min));
+      return withCoords.map((item) => ({
+        item,
+        x: minPct + scale(getLng(item), minLng, maxLng) * (maxPct - minPct),
+        y: minPct + (1 - scale(getLat(item), minLat, maxLat)) * (maxPct - minPct)
+      }));
+    }
+    const demandPlotPoints = computed(() =>
+      projectPoints(demandHeatmap.value, (c) => c.centroid.lat, (c) => c.centroid.lng, 12, 88).map((p) => ({ cell: p.item, x: p.x, y: p.y }))
+    );
+    const myCooperative = computed(() => {
+      const id = loggedInWorker.value?.workerProfile?.cooperativeId;
+      return cooperatives.value.find((c) => c.id === id) || null;
+    });
+
+    // ---------------- Admin ----------------
+    const adminActionBusy = ref(false);
+    const runAdminAction = async (action, successMessage) => {
+      if (adminActionBusy.value) return;
+      adminActionBusy.value = true;
+      try {
+        await action();
+        if (successMessage) showToast(successMessage, "", "success");
+      } catch (err) {
+        showToast(t("actionFailedToast"), apiErrorMessage(err), "error", 5000);
+      } finally {
+        adminActionBusy.value = false;
+      }
+    };
+    const confirmDemoReset = () => {
+      if (window.confirm(t("demoResetWarning"))) runDemoReset();
+    };
+
+    const STATUS_BADGE = {
+      COMPLETED: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900",
+      SETTLED: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900",
+      CANCELLED: "bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700",
+      ASSIGNED: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-900",
+      CONFIRMED: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-900",
+      IN_PROGRESS: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-900"
+    };
+    const statusBadgeClass = (status) => STATUS_BADGE[status] || "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900";
+
+    const adminAvailablePct = computed(() => {
+      const { totalWorkers, availableWorkers } = adminDashboard.value;
+      return totalWorkers ? Math.round((availableWorkers / totalWorkers) * 100) : 0;
+    });
+
+    const matchesQuery = (query, fields) => !query || fields.some((field) => String(field ?? "").toLowerCase().includes(query));
+    const requestSearch = ref("");
+    const filteredRequests = computed(() => {
+      const query = requestSearch.value.trim().toLowerCase();
+      return adminBookings.value.filter((b) => matchesQuery(query, [b.id, b.customerName, b.workerName, getServiceName(b.serviceCategoryId)]));
+    });
+    const bookingSearch = ref("");
+    const filteredBookings = computed(() => {
+      const query = bookingSearch.value.trim().toLowerCase();
+      return adminBookingsLedger.value.filter((b) => matchesQuery(query, [b.bookingId, b.paymentMethod, b.paymentStatus]));
+    });
+    const auditSearch = ref("");
+    const filteredAuditLogs = computed(() => {
+      const query = auditSearch.value.trim().toLowerCase();
+      return adminAuditLogs.value.filter((log) => matchesQuery(query, [log.action, log.entityType, log.entityId]));
+    });
+
+    const workerFilterAvailability = ref("");
+    const workerFilterCoop = ref("");
+    const customerStatusReason = ref("");
+
+    const forceAssignCandidates = computed(() => {
+      const logs = selectedRequest.value?.dispatchLog || [];
+      const seen = new Set();
+      const fromLog = logs
+        .filter((log) => !seen.has(log.workerId) && seen.add(log.workerId))
+        .map((log) => ({ id: log.workerId, name: log.workerName }));
+      if (fromLog.length) return fromLog;
+      return adminWorkers.value.filter((w) => w.verificationStatus === "APPROVED" && !w.suspended).map((w) => ({ id: w.id, name: w.name }));
+    });
+
+    const topSectorMax = computed(() => Math.max(0, ...adminReports.value.topSectors.map((s) => s.completedCount)));
+    const broadcastResultLabel = computed(() =>
+      /^\d+$/.test(broadcastResult.value) ? t("broadcastSentTo", { count: broadcastResult.value }) : broadcastResult.value
+    );
+
+    // Live operations: real positions from GET /admin/live/workers, kept current by
+    // the worker:location socket event. Zoom/pan only changes the SVG viewBox.
+    const liveAdminFilterStatus = ref("All");
+    const liveWorkerSearch = ref("");
+    const filteredLiveWorkers = computed(() => {
+      const query = liveWorkerSearch.value.trim().toLowerCase();
+      return adminLiveWorkers.value.filter(
+        (w) => (liveAdminFilterStatus.value === "All" || w.status === liveAdminFilterStatus.value) && matchesQuery(query, [w.name])
+      );
+    });
+    const liveStatsTotalWorkers = computed(() => adminLiveWorkers.value.length);
+    const liveStatsAvailable = computed(() => adminLiveWorkers.value.filter((w) => w.status === "AVAILABLE").length);
+    const liveStatsOnJob = computed(() => adminLiveWorkers.value.filter((w) => w.status === "ON_JOB").length);
+    const liveStatsTravelling = computed(() => adminLiveWorkers.value.filter((w) => w.status === "TRAVELLING").length);
+    const liveStatsOffDuty = computed(() => adminLiveWorkers.value.filter((w) => w.status === "OFF_DUTY").length);
+    const liveStatsActiveJobs = computed(() => adminLiveWorkers.value.filter((w) => w.bookingId).length);
+
+    const MAP_W = 600;
+    const MAP_H = 400;
+    const mapZoom = ref(1);
+    const mapCenter = ref({ x: MAP_W / 2, y: MAP_H / 2 });
+    const computedViewBox = computed(() => {
+      const w = MAP_W / mapZoom.value;
+      const h = MAP_H / mapZoom.value;
+      return `${mapCenter.value.x - w / 2} ${mapCenter.value.y - h / 2} ${w} ${h}`;
+    });
+    const livePlotPoints = computed(() =>
+      projectPoints(filteredLiveWorkers.value, (w) => w.lat, (w) => w.lng, 8, 92).map((p) => ({
+        worker: p.item,
+        x: (p.x / 100) * MAP_W,
+        y: (p.y / 100) * MAP_H
+      }))
+    );
+    const zoomIn = () => (mapZoom.value = Math.min(6, mapZoom.value * 1.5));
+    const zoomOut = () => (mapZoom.value = Math.max(1, mapZoom.value / 1.5));
+    const fitAll = () => {
+      mapZoom.value = 1;
+      mapCenter.value = { x: MAP_W / 2, y: MAP_H / 2 };
+    };
+    const selectedWorkerId = ref(null);
+    const selectedLiveWorker = computed(() => adminLiveWorkers.value.find((w) => w.workerId === selectedWorkerId.value) || null);
+    const focusWorker = (worker) => {
+      selectedWorkerId.value = worker.workerId;
+      const point = livePlotPoints.value.find((p) => p.worker.workerId === worker.workerId);
+      if (point) {
+        mapCenter.value = { x: point.x, y: point.y };
+        mapZoom.value = Math.max(mapZoom.value, 2);
+      }
+    };
+    const closeLiveWorkerDrawer = () => {
+      selectedWorkerId.value = null;
+      fitAll();
     };
 
     return {
@@ -1351,7 +1997,101 @@ const app = createApp({
       animatedDispatched,
       animatedCooperatives,
       statsAnimationCompleted,
-      triggerStatsAnimation
+      triggerStatsAnimation,
+
+      currentActiveUser,
+      toasts,
+      showToast,
+      dismissToast,
+      isNotificationDropdownOpen,
+      isProfileMenuOpen,
+      toggleNotifications,
+      toggleProfileMenu,
+      closeHeaderDropdowns,
+      serviceSearchQuery,
+      selectedServiceCategory,
+      previewService,
+      serviceCategories,
+      getServiceDescription,
+      filteredServices,
+      openServicePreview,
+      closeServicePreview,
+      recentServices,
+      selectRecentService,
+      getServiceSvg,
+      requestStep,
+      isSubmittingRequest,
+      canContinueRequestStep,
+      nextRequestStep,
+      prevRequestStep,
+      goToRequestStep,
+      setQuickDatePreset,
+      useCurrentLocation,
+      activeBookingSummary,
+      customerBookingSearch,
+      filteredCustomerBookings,
+      expandedWorkerId,
+      toggleExpandWorker,
+      availabilityBusy,
+      toggleAvailabilityWithFeedback,
+      jobActionBusy,
+      runJobAction,
+      offerBusy,
+      respondToOffer,
+      offerSecondsLeft,
+      workerJobStageIndex,
+      workerOrderStatusFilter,
+      filteredWorkerBookings,
+      earningsFilterType,
+      earningsFilterStatus,
+      showFilterDrawer,
+      filteredTransactions,
+      txnTypeLabel,
+      earningsPeriodTotal,
+      redemptionHistory,
+      selectedIncentive,
+      incentiveStatusLabel,
+      verificationLabel,
+      availabilityLabel,
+      selectedMapZone,
+      selectMapZone,
+      demandPlotPoints,
+      myCooperative,
+      adminActionBusy,
+      runAdminAction,
+      confirmDemoReset,
+      statusBadgeClass,
+      adminAvailablePct,
+      requestSearch,
+      filteredRequests,
+      bookingSearch,
+      filteredBookings,
+      auditSearch,
+      filteredAuditLogs,
+      workerFilterAvailability,
+      workerFilterCoop,
+      customerStatusReason,
+      forceAssignCandidates,
+      topSectorMax,
+      broadcastResultLabel,
+      liveAdminFilterStatus,
+      liveWorkerSearch,
+      filteredLiveWorkers,
+      liveStatsTotalWorkers,
+      liveStatsAvailable,
+      liveStatsOnJob,
+      liveStatsTravelling,
+      liveStatsOffDuty,
+      liveStatsActiveJobs,
+      computedViewBox,
+      livePlotPoints,
+      zoomIn,
+      zoomOut,
+      fitAll,
+      selectedWorkerId,
+      selectedLiveWorker,
+      focusWorker,
+      closeLiveWorkerDrawer
     };
   }
 });
