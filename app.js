@@ -356,15 +356,42 @@ const app = createApp({
       return profile;
     }
 
+    // The API runs on a free Render instance that sleeps when idle; the first
+    // request after a sleep can hang for a minute or more with no feedback.
+    // After a few seconds of waiting, the login forms explain why.
+    const apiSlow = ref(false);
+    let apiSlowTimer = null;
+    // The refresh cookie is httpOnly, so JS can't see it. This flag records
+    // that a sign-in happened on this browser, so first-time visitors skip a
+    // refresh call that could only 401.
+    const SESSION_HINT_KEY = "worksetu_session";
+    function setSessionHint(on) {
+      try {
+        if (on) localStorage.setItem(SESSION_HINT_KEY, "1");
+        else localStorage.removeItem(SESSION_HINT_KEY);
+      } catch {}
+    }
+    function hasSessionHint() {
+      try {
+        return localStorage.getItem(SESSION_HINT_KEY) === "1";
+      } catch {
+        return true;
+      }
+    }
+
     const handleLogin = async () => {
       loginError.value = "";
       authBusy.value = true;
+      apiSlow.value = false;
+      clearTimeout(apiSlowTimer);
+      apiSlowTimer = setTimeout(() => { apiSlow.value = true; }, 4000);
       try {
         const rolePath = currentRole.value === "customer" ? "customer" : currentRole.value === "worker" ? "worker" : "admin";
         const res = await api.request("POST", `/auth/${rolePath}/login`, {
           body: { identifier: authEmail.value.trim(), password: authPassword.value }
         });
         api.setAccessToken(res.token);
+        setSessionHint(true);
         startSession();
         // loadOwnProfile (GET /users/me) and loadCatalog (GET /services +
         // /public/cooperatives) don't depend on each other, but were
@@ -383,6 +410,8 @@ const app = createApp({
       } catch (err) {
         loginError.value = apiErrorMessage(err);
       } finally {
+        clearTimeout(apiSlowTimer);
+        apiSlow.value = false;
         authBusy.value = false;
       }
     };
@@ -457,8 +486,15 @@ const app = createApp({
       // on -- the local session is what actually has to end immediately, so
       // reset it synchronously first and fire the request in the
       // background. The backend reads the refresh cookie for this route,
-      // not the access token, so clearing it first here doesn't affect it.
+      // not the access token -- but the route itself sits behind
+      // requireAnyRole, so the request has to be started while the access
+      // token is still set. request() builds its headers synchronously, so
+      // kicking it off first and clearing local state right after keeps
+      // logout instant (confirmed live: clearing first made every logout
+      // 401, leaving the refresh token unrevoked).
+      const logoutRequest = api.request("POST", "/auth/logout").catch(() => {});
       endSession();
+      setSessionHint(false);
       loggedInCustomer.value = null;
       loggedInWorker.value = null;
       loggedInAdmin.value = null;
@@ -466,7 +502,7 @@ const app = createApp({
       activeBooking.value = null;
       currentRole.value = "landing";
       currentView.value = "home";
-      api.request("POST", "/auth/logout").catch(() => {});
+      return logoutRequest;
     };
 
     // Active Route Protection Watcher
@@ -967,13 +1003,16 @@ const app = createApp({
     // ----------------------------------------------------
     onMounted(async () => {
       applyThemeClass();
-      await loadPlatformStats();
-      await loadCatalog();
+      // Stats and catalog are independent of each other and of session
+      // restore; awaiting them one after another stacked round trips before
+      // the page settled.
+      const bootData = Promise.all([loadPlatformStats(), loadCatalog()]);
 
       // Section 6.4 — silently rotate an access token from the httpOnly
       // refresh cookie if one is already valid (page reload continuity),
       // since the access token itself is memory-only and lost on reload.
       try {
+        if (!hasSessionHint()) throw new Error("NO_SESSION");
         const token = await api.refreshSession();
         api.setAccessToken(token);
         // No role hint survives a reload; probe /users/me and route by its role.
@@ -991,9 +1030,11 @@ const app = createApp({
         }
         currentView.value = "dashboard";
       } catch {
+        setSessionHint(false);
         currentRole.value = "landing";
         currentView.value = "home";
       }
+      await bootData;
 
       api.onExpired(() => {
         // Mirrors handleLogout's cleanup: this fires on a passive expiry
@@ -2095,6 +2136,7 @@ const app = createApp({
       liveStatsOffDuty,
       liveStatsActiveJobs,
       computedViewBox,
+      apiSlow,
       mapZoom,
       livePlotPoints,
       zoomIn,

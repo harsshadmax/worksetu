@@ -216,12 +216,17 @@ export async function login(role: UserRole, identifier: string, password: string
     throw new AppError(401, "INVALID_CREDENTIALS", "Invalid credentials");
   }
 
-  const refreshedUser = await prisma.user.update({
-    where: { id: user.id },
-    data: { failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() }
-  });
-
-  const tokens = await issueTokenPair(refreshedUser, meta);
+  // The counter reset and the refresh-token insert are independent writes
+  // (tokens only need id/role/tokenVersion, which this update doesn't
+  // change), so run them concurrently instead of paying two sequential
+  // database round trips on every sign-in.
+  const [refreshedUser, tokens] = await Promise.all([
+    prisma.user.update({
+      where: { id: user.id },
+      data: { failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() }
+    }),
+    issueTokenPair(user, meta)
+  ]);
   return { user: refreshedUser, tokens };
 }
 
