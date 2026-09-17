@@ -11,6 +11,21 @@
   <!-- Noto Sans & Inter Fonts for Multi-Language Support (English, Hindi, Tamil) -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+Devanagari:wght@400;600;700&family=Noto+Sans+Tamil:wght@400;600;700&display=swap" rel="stylesheet">
 
+  <!-- Hide the raw Vue template ({{ t('...') }} etc.) until Vue has mounted.
+       #app carried v-cloak but nothing ever defined this rule, so the
+       uncompiled template was visible for the whole script download, and
+       permanently if Vue failed to load. Kept outside Tailwind on purpose:
+       Tailwind's CDN script is itself one of the slow downloads. -->
+  <style>
+    [v-cloak] { display: none !important; }
+    .boot-splash { display: none; }
+    body:has(#app[v-cloak]) .boot-splash {
+      display: flex; min-height: 100vh; align-items: center; justify-content: center;
+      flex-direction: column; gap: 12px; font-family: Inter, system-ui, sans-serif;
+      font-size: 14px; color: #64748b; text-align: center; padding: 16px;
+    }
+  </style>
+
   <!-- Tailwind CSS CDN -->
   <link rel="preconnect" href="https://worksetu-api.onrender.com" crossorigin>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -535,6 +550,11 @@
   </style>
 </head>
 <body class="min-h-screen flex flex-col font-sans">
+  <!-- Shown only while #app is still cloaked (see the v-cloak rule in <head>). -->
+  <div class="boot-splash" role="status" aria-live="polite">
+    <img src="worksetu_logo.png" alt="" width="56" height="56">
+    <span id="bootSplashText">Loading Worksetu…</span>
+  </div>
   <!-- Scroll Progress Indicator (Requirement 11) -->
   <div id="scrollProgressBar" class="fixed top-0 left-0 h-0.5 bg-custom-primary z-50 transition-all duration-100 ease-out" style="width: 0%;"></div>
 
@@ -4532,6 +4552,12 @@
   <!-- Load dependencies (Vue, Socket.io client, our API client, and app) -->
   <script src="https://cdn.jsdelivr.net/npm/vue@3.5.42/dist/vue.global.prod.js"></script>
   <script src="https://cdn.socket.io/4.8.0/socket.io.min.js"></script>
+  <!-- If a CDN is blocked or down (jsdelivr is blocked on some networks), load
+       the same pinned builds from a second CDN before app.js needs them. -->
+  <script>
+    if (!window.Vue) document.write('<script src="https://unpkg.com/vue@3.5.42/dist/vue.global.prod.js"><\/script>');
+    if (!window.io) document.write('<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.8.0/dist/socket.io.min.js"><\/script>');
+  </script>
 
   <!-- Deployment: point at your deployed backend (Render/Railway URL). Leave
        as-is for local dev (api.js falls back to http://localhost:4000). -->
@@ -4541,9 +4567,16 @@
   <!-- Render's CDN caches each file for up to 5 min (s-maxage=300), so a fresh
        index.html can pair with a stale app.js right after a deploy. Bump ?v= on all
        four tags whenever any of these files changes. -->
-  <script src="translations.js?v=2026-09-17.4"></script>
-  <script src="mockData.js?v=2026-09-17.4"></script>
-  <script src="api.js?v=2026-09-17.4"></script>
-  <script src="app.js?v=2026-09-17.4"></script>
+  <script src="translations.js?v=2026-09-17.5"></script>
+  <script src="mockData.js?v=2026-09-17.5"></script>
+  <script src="api.js?v=2026-09-17.5"></script>
+  <script src="app.js?v=2026-09-17.5"></script>
+  <script>
+    // Neither CDN delivered Vue: say so instead of an endless loading screen.
+    if (!window.Vue) {
+      document.getElementById("bootSplashText").textContent =
+        "Worksetu couldn't load. Check your internet connection and reload the page.";
+    }
+  </script>
 </body>
 </html>
