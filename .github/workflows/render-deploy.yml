@@ -1,0 +1,86 @@
+name: Deploy to Render
+
+# Render's commit-triggered auto-deploy isn't firing for this repo, so this
+# calls each service's Render Deploy Hook on push to master instead.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   RENDER_DEPLOY_HOOK_WEB  Deploy Hook URL of the "worksetu-web" static site
+#   RENDER_DEPLOY_HOOK_API  Deploy Hook URL of the "worksetu-api" web service
+#
+# If Render auto-deploy is later fixed, delete this workflow to avoid double deploys.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Service(s) to deploy"
+        type: choice
+        options: [both, web, api]
+        default: both
+
+concurrency:
+  group: render-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide which services changed
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          TARGET: ${{ inputs.target }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          web=false; api=false
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            [ "$TARGET" = "both" ] || [ "$TARGET" = "web" ] && web=true
+            [ "$TARGET" = "both" ] || [ "$TARGET" = "api" ] && api=true
+          elif [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            # First push / force-push: no usable base to diff against, deploy both.
+            web=true; api=true
+          else
+            files=$(git diff --name-only "$BEFORE" "$AFTER")
+            echo "Changed files:"; echo "$files"
+            # Exactly the files worksetu-web's build copies into dist/.
+            echo "$files" | grep -qxE 'index\.html|app\.js|api\.js|mockData\.js|translations\.js|worksetu_logo\.png' && web=true
+            echo "$files" | grep -qE '^server/|^render\.yaml$' && api=true
+          fi
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+          echo "api=$api" >> "$GITHUB_OUTPUT"
+          echo "Deploy web: $web, api: $api"
+
+      - name: Deploy worksetu-web
+        if: steps.changes.outputs.web == 'true'
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_WEB }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::warning::RENDER_DEPLOY_HOOK_WEB secret is not set; skipping web deploy."
+            exit 0
+          fi
+          curl -fsS --retry 3 --retry-delay 5 -X POST "$HOOK" -o /dev/null
+          echo "Triggered worksetu-web deploy."
+
+      - name: Deploy worksetu-api
+        if: steps.changes.outputs.api == 'true'
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_API }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::warning::RENDER_DEPLOY_HOOK_API secret is not set; skipping api deploy."
+            exit 0
+          fi
+          curl -fsS --retry 3 --retry-delay 5 -X POST "$HOOK" -o /dev/null
+          echo "Triggered worksetu-api deploy."
