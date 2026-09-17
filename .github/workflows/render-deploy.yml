@@ -75,22 +75,14 @@ jobs:
         if: steps.changes.outputs.web == 'true'
         env:
           HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_WEB }}
-        run: |
-          if [ -z "$HOOK" ]; then
-            echo "::warning::RENDER_DEPLOY_HOOK_WEB secret is not set; skipping web deploy."
-            exit 0
-          fi
-          curl -fsS --retry 3 --retry-delay 5 -X POST "$HOOK" -o /dev/null
-          echo "Triggered worksetu-web deploy."
+          SECRET_NAME: RENDER_DEPLOY_HOOK_WEB
+          SERVICE: worksetu-web
+        run: bash .github/scripts/render-deploy-hook.sh
 
       - name: Deploy worksetu-api
         if: steps.changes.outputs.api == 'true'
         env:
           HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_API }}
-        run: |
-          if [ -z "$HOOK" ]; then
-            echo "::warning::RENDER_DEPLOY_HOOK_API secret is not set; skipping api deploy."
-            exit 0
-          fi
-          curl -fsS --retry 3 --retry-delay 5 -X POST "$HOOK" -o /dev/null
-          echo "Triggered worksetu-api deploy."
+          SECRET_NAME: RENDER_DEPLOY_HOOK_API
+          SERVICE: worksetu-api
+        run: bash .github/scripts/render-deploy-hook.sh
