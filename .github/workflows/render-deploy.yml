@@ -7,6 +7,9 @@ name: Deploy to Render
 #   RENDER_DEPLOY_HOOK_WEB  Deploy Hook URL of the "worksetu-web" static site
 #   RENDER_DEPLOY_HOOK_API  Deploy Hook URL of the "worksetu-api" web service
 #
+# Force a redeploy without code changes by pushing a commit whose message contains
+# [deploy web], [deploy api] or [deploy both] (e.g. git commit --allow-empty).
+#
 # If Render auto-deploy is later fixed, delete this workflow to avoid double deploys.
 
 on:
@@ -42,9 +45,16 @@ jobs:
           TARGET: ${{ inputs.target }}
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
+          HEAD_MSG: ${{ github.event.head_commit.message }}
         run: |
           web=false; api=false
-          if [ "$EVENT" = "workflow_dispatch" ]; then
+          # A "[deploy web|api|both]" tag in the pushed commit message forces a
+          # redeploy without code changes (e.g. an empty commit).
+          forced=$(printf '%s' "$HEAD_MSG" | grep -oE '\[deploy (web|api|both)\]' | head -1 | tr -d '[]' | cut -d' ' -f2 || true)
+          if [ -n "$forced" ]; then
+            [ "$forced" = "both" ] || [ "$forced" = "web" ] && web=true
+            [ "$forced" = "both" ] || [ "$forced" = "api" ] && api=true
+          elif [ "$EVENT" = "workflow_dispatch" ]; then
             [ "$TARGET" = "both" ] || [ "$TARGET" = "web" ] && web=true
             [ "$TARGET" = "both" ] || [ "$TARGET" = "api" ] && api=true
           elif [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
