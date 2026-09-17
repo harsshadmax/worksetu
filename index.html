@@ -4510,9 +4510,12 @@
   <script>
     window.WORKSETU_API_BASE = "https://worksetu-api.onrender.com";
   </script>
-  <script src="translations.js"></script>
-  <script src="mockData.js"></script>
-  <script src="api.js"></script>
-  <script src="app.js"></script>
+  <!-- Render's CDN caches each file for up to 5 min (s-maxage=300), so a fresh
+       index.html can pair with a stale app.js right after a deploy. Bump ?v= on all
+       four tags whenever any of these files changes. -->
+  <script src="translations.js?v=2026-09-17.1"></script>
+  <script src="mockData.js?v=2026-09-17.1"></script>
+  <script src="api.js?v=2026-09-17.1"></script>
+  <script src="app.js?v=2026-09-17.1"></script>
 </body>
 </html>
