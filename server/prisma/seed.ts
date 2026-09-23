@@ -1,20 +1,47 @@
 // prisma/seed.ts — Worksetu demo dataset (Section 19.3, 21.5, 15.9)
 //
-// Draws on mockData.js (cooperatives, services, workers, customers, and the
-// original 9 sample bookings) and extends it with synthetic-but-coherent
-// records so every Booking lifecycle stage (Section 1.0), skill/location,
-// review, notification, wallet/ledger, and incentive/Feedback Credit row is
-// represented at least once, per Section 19.3. Re-runnable: clears its own
+// The dataset itself lives in prisma/seed-data.ts: one cooperative network of
+// customers, workers and bookings from which every other record here is
+// derived -- invoices from the booking, payouts and feedback credits from the
+// invoice, worker ratings from the reviews actually written, notifications
+// from what happened on those bookings. Nothing is written per screen, so a
+// dashboard total and the table under it cannot disagree. Every Booking
+// lifecycle stage (Section 1.0) is represented at least once, per Section
+// 19.3. Re-runnable: clears its own
 // seed-owned tables in FK-safe order before re-inserting, so this same
 // script backs POST /api/v1/admin/demo/reset (Section 15.9).
 
-import { PrismaClient, VerificationStatus, WorkerAvailabilityStatus, ProficiencyLevel, BookingStatus, DispatchAttempt, DispatchOutcome, PaymentMethod, CreditTransactionType, CreditTransactionStatus, PayoutMethod, SettlementStatus, IncentiveStatus, NotificationAudience } from "@prisma/client";
+import { PrismaClient, VerificationStatus, ProficiencyLevel, BookingStatus, DispatchAttempt, DispatchOutcome, PaymentMethod, CreditTransactionType, CreditTransactionStatus, PayoutMethod, SettlementStatus, IncentiveStatus, NotificationAudience } from "@prisma/client";
 import bcrypt from "bcrypt";
+import { customers as customerSeeds, workers as workerSeeds, buildBookings } from "./seed-data";
 
 const prisma = new PrismaClient();
 const BCRYPT_COST = 12;
 const COMMISSION_PERCENT = 15.0;
 const FEEDBACK_CREDIT_SHARE = 0.2;
+
+// Relative dates, so the demo always looks like it has been running for
+// months no matter when it was seeded.
+const SEED_RUN_AT = new Date();
+function daysBefore(days: number, hour?: number, minute?: number): Date {
+  const d = new Date(SEED_RUN_AT.getTime() - days * 24 * 60 * 60 * 1000);
+  if (hour !== undefined) d.setHours(hour, minute ?? 0, 0, 0);
+  return d;
+}
+function minutesAfter(from: Date, minutes: number): Date {
+  return new Date(from.getTime() + minutes * 60 * 1000);
+}
+function formatMoney(amount: number): string {
+  return "\u20b9" + Math.round(amount).toLocaleString("en-IN");
+}
+// Straight-line distance, matching the dispatch engine's own haversine.
+function distanceKm(lng1: number, lat1: number, lng2: number, lat2: number): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 async function hash(pw: string): Promise<string> {
   return bcrypt.hash(pw, BCRYPT_COST);
@@ -175,14 +202,11 @@ async function main() {
     }
   });
 
-  console.log("Customers...");
-  const customerSeeds = [
-    { id: "cust-1", name: "Anand Verma", email: "anand@example.com", phone: "9876543210", address: "12, Kasturba Gandhi Marg, Connaught Place, New Delhi", lng: 77.2167, lat: 28.6315 },
-    { id: "cust-2", name: "Deepika Ramaswamy", email: "deepika@example.com", phone: "8765432109", address: "54, Gandhi Nagar Main Road, Adyar, Chennai", lng: 80.2569, lat: 13.0064 }
-  ];
+  console.log(`Customers (${customerSeeds.length})...`);
   const customerProfileIdByMockId = new Map<string, string>();
   const customerUserIdByMockId = new Map<string, string>();
   for (const c of customerSeeds) {
+    const joinedAt = daysBefore(c.joinedDaysAgo);
     const user = await prisma.user.create({
       data: {
         role: "CUSTOMER",
@@ -191,9 +215,10 @@ async function main() {
         phone: c.phone,
         passwordHash: await hash("Customer@123"),
         accountStatus: "ACTIVE",
-        emailVerifiedAt: new Date(),
-        phoneVerifiedAt: new Date(),
-        acceptedTermsAt: new Date(),
+        emailVerifiedAt: joinedAt,
+        phoneVerifiedAt: joinedAt,
+        acceptedTermsAt: joinedAt,
+        createdAt: joinedAt,
         customerProfile: { create: { defaultAddress: c.address } },
         preference: { create: {} }
       },
@@ -204,37 +229,13 @@ async function main() {
     customerUserIdByMockId.set(c.id, user.id);
   }
 
-  console.log("Workers...");
-  interface WorkerSeed {
-    mockId: string;
-    name: string;
-    email: string;
-    phone: string;
-    skill: string;
-    extraSkills?: string[];
-    rating: number;
-    experience: number;
-    location: string;
-    lng: number;
-    lat: number;
-    cooperativeId: string;
-    availabilityStatus: WorkerAvailabilityStatus;
-  }
-  const workerSeeds: WorkerSeed[] = [
-    { mockId: "worker-1", name: "Ravi Kumar", email: "ravi.kumar@example.com", phone: "9876543211", skill: "plumbing", rating: 4.8, experience: 6, location: "Adyar, Chennai", lng: 80.2565, lat: 13.0012, cooperativeId: "coop-1", availabilityStatus: "AVAILABLE" },
-    { mockId: "worker-2", name: "Priya Shanmugam", email: "priya.shanmugam@example.com", phone: "8765432112", skill: "plumbing", rating: 4.9, experience: 5, location: "Mylapore, Chennai", lng: 80.2707, lat: 13.0339, cooperativeId: "coop-1", availabilityStatus: "AVAILABLE" },
-    { mockId: "worker-3", name: "Amit Singh", email: "amit.singh@example.com", phone: "7654321213", skill: "plumbing", rating: 4.7, experience: 8, location: "Connaught Place, New Delhi", lng: 77.2167, lat: 28.6315, cooperativeId: "coop-2", availabilityStatus: "AVAILABLE" },
-    { mockId: "worker-4", name: "Vikram Rathore", email: "vikram.rathore@example.com", phone: "9543210914", skill: "plumbing", rating: 4.5, experience: 4, location: "Andheri, Mumbai", lng: 72.8697, lat: 19.1197, cooperativeId: "coop-3", availabilityStatus: "AVAILABLE" },
-    { mockId: "worker-5", name: "Suresh Babu", email: "suresh.babu@example.com", phone: "9432109815", skill: "plumbing", rating: 4.2, experience: 10, location: "T. Nagar, Chennai", lng: 80.2341, lat: 13.0418, cooperativeId: "coop-1", availabilityStatus: "OFF_DUTY" },
-    { mockId: "worker-6", name: "Lakshmi Narayanan", email: "lakshmi.narayanan@example.com", phone: "9321098716", skill: "plumbing", rating: 4.6, experience: 7, location: "Indiranagar, Bangalore", lng: 77.6408, lat: 12.9716, cooperativeId: "coop-4", availabilityStatus: "AVAILABLE" },
-    { mockId: "worker-7", name: "Rajesh Kannan", email: "rajesh.kannan@example.com", phone: "9210987617", skill: "electrical", rating: 4.9, experience: 9, location: "Velachery, Chennai", lng: 80.2209, lat: 12.9756, cooperativeId: "coop-1", availabilityStatus: "AVAILABLE" },
-    { mockId: "worker-8", name: "Meena Kumari", email: "meena.kumari@example.com", phone: "9109876518", skill: "caregiving", extraSkills: ["cleaning"], rating: 4.8, experience: 5, location: "Bandra, Mumbai", lng: 72.8296, lat: 19.0596, cooperativeId: "coop-3", availabilityStatus: "AVAILABLE" }
-  ];
-
+  console.log(`Workers (${workerSeeds.length})...`);
   const workerProfileIdByMockId = new Map<string, string>();
   const workerUserIdByMockId = new Map<string, string>();
   for (const w of workerSeeds) {
     const proficiency: ProficiencyLevel = w.experience >= 8 ? "ADVANCED" : w.experience >= 5 ? "INTERMEDIATE" : "BASIC";
+    const joinedAt = daysBefore(w.joinedDaysAgo);
+    const approved = w.verification === "APPROVED";
     const user = await prisma.user.create({
       data: {
         role: "WORKER",
@@ -243,26 +244,29 @@ async function main() {
         phone: w.phone,
         passwordHash: await hash("Worker@123"),
         accountStatus: "ACTIVE",
-        emailVerifiedAt: new Date(),
-        phoneVerifiedAt: new Date(),
-        acceptedTermsAt: new Date(),
+        emailVerifiedAt: joinedAt,
+        phoneVerifiedAt: joinedAt,
+        acceptedTermsAt: joinedAt,
+        createdAt: joinedAt,
         preference: { create: {} },
         workerProfile: {
           create: {
             cooperativeId: w.cooperativeId,
             experienceYears: w.experience,
-            serviceAreaRadiusKm: 10,
-            verificationStatus: "APPROVED" as VerificationStatus,
-            approvedAt: new Date(),
-            approvedByAdminId: adminUser.id,
-            availabilityStatus: w.availabilityStatus,
-            ratingAverage: w.rating,
-            ratingCount: 1,
+            serviceAreaRadiusKm: w.serviceRadiusKm,
+            verificationStatus: w.verification as VerificationStatus,
+            approvedAt: approved ? joinedAt : null,
+            approvedByAdminId: approved ? adminUser.id : null,
+            // An applicant still in review is not taking jobs yet.
+            availabilityStatus: approved ? w.availabilityStatus : "OFF_DUTY",
+            ratingAverage: 0,
+            ratingCount: 0,
+            createdAt: joinedAt,
             skills: {
               create: [w.skill, ...(w.extraSkills ?? [])].map((skillId, idx) => ({
                 skillCategoryId: skillId,
                 proficiencyLevel: proficiency,
-                verificationStatus: "APPROVED" as VerificationStatus,
+                verificationStatus: (approved ? "APPROVED" : "PENDING") as VerificationStatus,
                 isPrimary: idx === 0
               }))
             }
@@ -275,137 +279,174 @@ async function main() {
     workerProfileIdByMockId.set(w.mockId, user.workerProfile!.id);
     workerUserIdByMockId.set(w.mockId, user.id);
 
-    await prisma.auditLog.create({
-      data: {
-        actorId: adminUser.id,
-        action: "WORKER_VERIFIED",
-        entityType: "WorkerProfile",
-        entityId: user.workerProfile!.id,
-        metadata: { decision: "APPROVED" }
-      }
-    });
+    if (approved) {
+      await prisma.auditLog.create({
+        data: {
+          actorId: adminUser.id,
+          action: "WORKER_VERIFIED",
+          entityType: "WorkerProfile",
+          entityId: user.workerProfile!.id,
+          metadata: { decision: "APPROVED", cooperativeId: w.cooperativeId },
+          createdAt: joinedAt
+        }
+      });
+    }
   }
 
   // ---------------------------------------------------------------------
-  // Historical bookings from mockData.js — all "Completed" (with rating +
-  // review already given) map to backend SETTLED (Section 1.0: review
-  // submission is what finalizes settlement); the one "Cancelled" row maps
-  // to CANCELLED.
+  // Bookings. One generated plan drives every stage of the lifecycle, so the
+  // ledger, reviews, ratings and dashboard totals are all derived from the
+  // same rows instead of being written independently per screen.
   // ---------------------------------------------------------------------
-  console.log("Historical bookings (from mockData.js)...");
-  interface MockBooking {
-    customerMockId: string;
-    serviceId: string;
-    workerMockId: string | null;
-    description: string;
-    datetime: string;
-    urgency: "NORMAL" | "URGENT";
-    estimatedCost: number;
-    status: "SETTLED" | "CANCELLED";
-    rating: number | null;
-    review: string | null;
-  }
-  const mockBookings: MockBooking[] = [
-    { customerMockId: "cust-2", serviceId: "plumbing", workerMockId: "worker-1", description: "Repair bathroom shower mixer and inspect kitchen drain blockage.", datetime: "2026-08-20T10:00", urgency: "NORMAL", estimatedCost: 400, status: "SETTLED", rating: 5, review: "Excellent service! Ravi was very polite and solved the issue quickly. He had all the tools and explained the cooperative billing structure clearly." },
-    { customerMockId: "cust-2", serviceId: "cleaning", workerMockId: "worker-8", description: "Complete post-festive cleaning of 3BHK house.", datetime: "2026-08-22T09:00", urgency: "NORMAL", estimatedCost: 1180, status: "SETTLED", rating: 4, review: "Very professional cleaners. They arrived on time. Deducting one star only because they ran out of a cleaning solution, but overall coop service was great." },
-    { customerMockId: "cust-1", serviceId: "plumbing", workerMockId: "worker-1", description: "Install new kitchen sink faucet and fix leakage in inlet pipe.", datetime: "2026-08-21T14:30", urgency: "NORMAL", estimatedCost: 350, status: "SETTLED", rating: 5, review: "Ravi did a great job. Quick and highly professional." },
-    { customerMockId: "cust-2", serviceId: "plumbing", workerMockId: "worker-1", description: "Water tank valve replacement.", datetime: "2026-08-22T11:00", urgency: "NORMAL", estimatedCost: 500, status: "SETTLED", rating: 4, review: "Arrived on time. The cooperative society rates are very transparent." },
-    { customerMockId: "cust-1", serviceId: "plumbing", workerMockId: "worker-1", description: "Basement drainage pipeline cleaning.", datetime: "2026-08-23T15:00", urgency: "URGENT", estimatedCost: 650, status: "SETTLED", rating: 5, review: "Emergency response was fantastic. Highly recommended plumbing crew." },
-    { customerMockId: "cust-2", serviceId: "plumbing", workerMockId: "worker-1", description: "Bathroom wash basin fitting installation.", datetime: "2026-08-24T10:00", urgency: "NORMAL", estimatedCost: 300, status: "SETTLED", rating: 5, review: "Very neat work and friendly attitude." },
-    { customerMockId: "cust-1", serviceId: "plumbing", workerMockId: "worker-1", description: "Geyser inlet outlet hose replacement.", datetime: "2026-08-24T16:30", urgency: "NORMAL", estimatedCost: 280, status: "SETTLED", rating: 5, review: "Quick and efficient resolution." },
-    { customerMockId: "cust-2", serviceId: "plumbing", workerMockId: "worker-1", description: "Kitchen water purifier line connector block.", datetime: "2026-08-25T09:00", urgency: "NORMAL", estimatedCost: 220, status: "SETTLED", rating: 5, review: "Excellent response, solved the Purifier line issue in 10 minutes." },
-    { customerMockId: "cust-2", serviceId: "plumbing", workerMockId: "worker-1", description: "Outdoor sprinkler line joint leak check.", datetime: "2026-08-19T13:00", urgency: "NORMAL", estimatedCost: 200, status: "CANCELLED", rating: null, review: null }
-  ];
+  const bookingPlans = buildBookings();
+  console.log(`Bookings (${bookingPlans.length}) with invoices, payments, reviews and payouts...`);
 
-  // Aggregate rating for worker-1 (Ravi) so ratingAverage/ratingCount reflect
-  // the reviews actually seeded below, instead of the flat mock "4.8".
-  const raviReviews = mockBookings.filter((b) => b.workerMockId === "worker-1" && b.rating !== null).map((b) => b.rating as number);
-  const meenaReviews = mockBookings.filter((b) => b.workerMockId === "worker-8" && b.rating !== null).map((b) => b.rating as number);
+  const ratingsByWorker = new Map<string, number[]>();
+  const now = new Date();
+  const recentEvents: { userId: string; title: string; body: string; at: Date; isRead: boolean }[] = [];
+  const areaOf = (address: string) => address.split(",").slice(-2)[0].trim();
 
-  for (const b of mockBookings) {
-    const customerProfileId = customerProfileIdByMockId.get(b.customerMockId)!;
-    const custSeed = customerSeeds.find((c) => c.id === b.customerMockId)!;
-    const workerProfileId = b.workerMockId ? workerProfileIdByMockId.get(b.workerMockId)! : null;
-    const service = serviceData.find((s) => s.id === b.serviceId)!;
-    const createdAt = new Date(b.datetime);
-    const platformFee = Math.round(b.estimatedCost * (COMMISSION_PERCENT / 100) * 100) / 100;
+  for (const plan of bookingPlans) {
+    const cust = customerSeeds.find((c) => c.id === plan.customerMockId)!;
+    const customerProfileId = customerProfileIdByMockId.get(plan.customerMockId)!;
+    const service = serviceData.find((s) => s.id === plan.serviceId)!;
+    const workerProfileId = plan.workerMockId ? workerProfileIdByMockId.get(plan.workerMockId)! : null;
+    const workerSeed = plan.workerMockId ? workerSeeds.find((w) => w.mockId === plan.workerMockId)! : null;
+
+    const createdAt = daysBefore(plan.daysAgo, plan.hour, plan.minute);
+    const total = service.baseRate + service.hourlyRate * plan.hoursBilled;
+    const platformFee = Math.round(total * (COMMISSION_PERCENT / 100) * 100) / 100;
+    const confirmedAt = minutesAfter(createdAt, 6);
+    const startedAt = minutesAfter(createdAt, 35);
+    const completedAt = minutesAfter(startedAt, plan.hoursBilled * 60);
+    const settledAt = minutesAfter(completedAt, 12);
+    const settled = plan.status === "SETTLED";
+    const live = plan.status === "ASSIGNED" || plan.status === "CONFIRMED" || plan.status === "IN_PROGRESS";
+    const hasWorker = settled || live || plan.status === "COMPLETED";
 
     const bookingId = await insertBooking({
       customerId: customerProfileId,
-      serviceCategoryId: b.serviceId,
-      description: b.description,
-      address: custSeed.address,
-      lng: custSeed.lng,
-      lat: custSeed.lat,
+      serviceCategoryId: plan.serviceId,
+      description: plan.description,
+      address: cust.address,
+      lng: cust.lng,
+      lat: cust.lat,
       scheduledAt: null,
-      urgency: b.urgency,
+      urgency: plan.urgency,
       baseCharge: service.baseRate,
       hourlyRate: service.hourlyRate,
-      estimatedTotal: b.estimatedCost,
-      status: b.status as BookingStatus,
-      assignedWorkerId: b.status === "CANCELLED" ? null : workerProfileId,
-      // A real 1-hour gap between start and completion — matches
-      // Invoice.hoursBilled's own default of 1 — instead of a zero-duration
-      // job, so hours-worked aggregates (Section 1.2.7) have something to sum.
-      confirmedAt: b.status === "SETTLED" ? createdAt : null,
-      startedAt: b.status === "SETTLED" ? createdAt : null,
-      completedAt: b.status === "SETTLED" ? new Date(createdAt.getTime() + 60 * 60 * 1000) : null,
-      settledAt: b.status === "SETTLED" ? new Date(createdAt.getTime() + 60 * 60 * 1000) : null,
-      cancelledAt: b.status === "CANCELLED" ? createdAt : null,
-      cancelReason: b.status === "CANCELLED" ? "Customer cancelled before a worker accepted the offer" : null,
+      estimatedTotal: total,
+      status: plan.status as BookingStatus,
+      assignedWorkerId: hasWorker ? workerProfileId : null,
+      confirmedAt: settled || plan.status === "CONFIRMED" || plan.status === "IN_PROGRESS" || plan.status === "COMPLETED" ? confirmedAt : null,
+      startedAt: settled || plan.status === "IN_PROGRESS" || plan.status === "COMPLETED" ? startedAt : null,
+      completedAt: settled || plan.status === "COMPLETED" ? completedAt : null,
+      settledAt: settled ? settledAt : null,
+      cancelledAt: plan.status === "CANCELLED" ? minutesAfter(createdAt, 18) : null,
+      cancelReason: plan.cancelReason ?? null,
       createdAt
     });
 
-    if (b.status === "SETTLED" && workerProfileId) {
+    // Offers that timed out, then whoever currently holds the open offer.
+    const declined = plan.declinedByMockIds ?? [];
+    for (let idx = 0; idx < declined.length; idx++) {
+      await prisma.dispatchLog.create({
+        data: {
+          bookingId,
+          workerId: workerProfileIdByMockId.get(declined[idx])!,
+          attemptNumber: (idx === 0 ? "ATTEMPT_1" : "ATTEMPT_2") as DispatchAttempt,
+          distanceKm: 0.9 + idx * 1.4,
+          continuityScore: 90 - idx * 20,
+          offeredAt: createdAt,
+          respondedAt: minutesAfter(createdAt, 1),
+          outcome: "TIMEOUT" as DispatchOutcome
+        }
+      });
+    }
+    for (const mockId of plan.offeredToMockIds ?? []) {
+      await prisma.dispatchLog.create({
+        data: {
+          bookingId,
+          workerId: workerProfileIdByMockId.get(mockId)!,
+          attemptNumber: (plan.status === "DISPATCHING_POOL" ? "POOL" : "ATTEMPT_1") as DispatchAttempt,
+          distanceKm: 2.3,
+          continuityScore: 64,
+          offeredAt: createdAt,
+          outcome: "OFFERED" as DispatchOutcome
+        }
+      });
+    }
+
+    if (workerProfileId && hasWorker) {
       await prisma.dispatchLog.create({
         data: {
           bookingId,
           workerId: workerProfileId,
           attemptNumber: "ATTEMPT_1" as DispatchAttempt,
-          distanceKm: 1.5,
-          continuityScore: 80,
+          distanceKm: Math.round(distanceKm(cust.lng, cust.lat, workerSeed!.lng, workerSeed!.lat) * 10) / 10,
+          continuityScore: 60 + ((plan.hoursBilled * 7) % 35),
           offeredAt: createdAt,
-          respondedAt: createdAt,
+          respondedAt: minutesAfter(createdAt, 2),
           outcome: "ACCEPTED" as DispatchOutcome
         }
       });
+    }
 
+    if (live && workerProfileId) {
+      await prisma.workerProfile.update({
+        where: { id: workerProfileId },
+        data: { availabilityStatus: "ON_JOB", currentBookingId: bookingId }
+      });
+    }
+
+    // An invoice exists from completion onward; payment, review and payout
+    // only once the customer has reviewed, which is what settles a booking.
+    if (settled || plan.status === "COMPLETED") {
       const invoice = await prisma.invoice.create({
         data: {
           bookingId,
           baseCharge: service.baseRate,
+          hoursBilled: plan.hoursBilled,
           hourlyCharge: service.hourlyRate,
           platformFee,
-          totalAmount: b.estimatedCost
+          totalAmount: total,
+          createdAt: completedAt
         }
       });
 
-      await prisma.paymentTransaction.create({
-        data: {
-          invoiceId: invoice.id,
-          paymentMethod: "CASH" as PaymentMethod,
-          paymentStatus: "PAID",
-          amount: b.estimatedCost,
-          processedAt: createdAt
-        }
-      });
+      if (settled) {
+        await prisma.paymentTransaction.create({
+          data: {
+            invoiceId: invoice.id,
+            paymentMethod: (plan.hoursBilled > 2 ? "DIRECT_PAY" : "CASH") as PaymentMethod,
+            paymentStatus: "PAID",
+            amount: total,
+            processedAt: settledAt
+          }
+        });
+      }
+    }
 
+    if (settled && workerProfileId && plan.rating !== null) {
       await prisma.review.create({
         data: {
           bookingId,
           customerId: customerProfileId,
           workerId: workerProfileId,
-          punctuality: b.rating!,
-          quality: b.rating!,
-          professionalism: b.rating!,
-          communication: b.rating!,
-          overallScore: b.rating!,
-          writtenFeedback: b.review,
-          createdAt
+          punctuality: plan.rating,
+          quality: plan.rating,
+          professionalism: plan.rating,
+          communication: plan.rating,
+          overallScore: plan.rating,
+          writtenFeedback: plan.review,
+          createdAt: settledAt
         }
       });
+      const list = ratingsByWorker.get(plan.workerMockId!) ?? [];
+      list.push(plan.rating);
+      ratingsByWorker.set(plan.workerMockId!, list);
 
-      const jobPayout = Math.round((b.estimatedCost - platformFee) * 100) / 100;
+      const jobPayout = Math.round((total - platformFee) * 100) / 100;
       await prisma.creditTransaction.create({
         data: {
           workerProfileId,
@@ -413,12 +454,12 @@ async function main() {
           amount: jobPayout,
           status: "COMPLETED" as CreditTransactionStatus,
           referenceBookingId: bookingId,
-          createdAt,
-          settledAt: createdAt
+          createdAt: settledAt,
+          settledAt
         }
       });
 
-      if (b.rating! >= 4.5) {
+      if (plan.rating >= 4.5) {
         const creditAmount = Math.round(platformFee * FEEDBACK_CREDIT_SHARE * 100) / 100;
         await prisma.feedbackCredit.upsert({
           where: { workerProfileId },
@@ -432,36 +473,50 @@ async function main() {
             amount: creditAmount,
             status: "COMPLETED" as CreditTransactionStatus,
             referenceBookingId: bookingId,
-            createdAt,
-            settledAt: createdAt
+            createdAt: settledAt,
+            settledAt
           }
         });
       }
     }
+
+    // Notifications describe what actually happened on these bookings.
+    if (plan.daysAgo <= 2) {
+      const customerUserId = customerUserIdByMockId.get(plan.customerMockId)!;
+      const serviceName = service.id === "domesticHelp" ? "domestic help" : service.id;
+      if (plan.status === "ASSIGNED" || plan.status === "CONFIRMED") {
+        recentEvents.push({ userId: customerUserId, title: "Worker assigned", body: `${workerSeed!.name} accepted your ${serviceName} booking and will reach ${areaOf(cust.address)} shortly.`, at: confirmedAt, isRead: false });
+        recentEvents.push({ userId: workerUserIdByMockId.get(plan.workerMockId!)!, title: "Job accepted", body: `You accepted a ${serviceName} job for ${cust.name} in ${areaOf(cust.address)}. Estimated ${formatMoney(total)}.`, at: confirmedAt, isRead: true });
+      }
+      if (plan.status === "IN_PROGRESS") {
+        recentEvents.push({ userId: customerUserId, title: "Work in progress", body: `${workerSeed!.name} has started the ${serviceName} job at your address.`, at: startedAt, isRead: false });
+      }
+      if (plan.status === "COMPLETED") {
+        recentEvents.push({ userId: customerUserId, title: "Service completed", body: `Your ${serviceName} booking is complete. Rate ${workerSeed!.name} to close the invoice of ${formatMoney(total)}.`, at: completedAt, isRead: false });
+        recentEvents.push({ userId: workerUserIdByMockId.get(plan.workerMockId!)!, title: "Awaiting customer review", body: `You marked the ${serviceName} job complete. The payout releases once ${cust.name} submits a review.`, at: completedAt, isRead: true });
+      }
+      if (plan.status === "DISPATCHING_TOP3" || plan.status === "DISPATCHING_POOL") {
+        recentEvents.push({ userId: customerUserId, title: "Finding a worker", body: `We are offering your ${serviceName} request to cooperative workers near ${areaOf(cust.address)}.`, at: createdAt, isRead: false });
+        for (const mockId of plan.offeredToMockIds ?? []) {
+          recentEvents.push({ userId: workerUserIdByMockId.get(mockId)!, title: "New job offer", body: `${serviceName} job near ${areaOf(cust.address)} — ${formatMoney(total)} estimated.`, at: createdAt, isRead: false });
+        }
+      }
+      if (settled && plan.rating !== null) {
+        recentEvents.push({ userId: workerUserIdByMockId.get(plan.workerMockId!)!, title: `New ${plan.rating}-star review`, body: `${cust.name} rated your ${serviceName} job ${plan.rating} out of 5.`, at: settledAt, isRead: plan.daysAgo > 1 });
+      }
+    }
   }
 
-  // Recompute ratingAverage/ratingCount from the reviews actually seeded,
-  // so the stored aggregate matches Section 3.3's "derived, not trusted"
-  // rule instead of carrying the flat mock rating forward unchanged.
-  for (const [mockId, ratings] of [
-    ["worker-1", raviReviews],
-    ["worker-8", meenaReviews]
-  ] as [string, number[]][]) {
-    if (ratings.length === 0) continue;
-    const avg = ratings.reduce((s, r) => s + r, 0) / ratings.length;
+  // Ratings are recomputed from the reviews that were actually written.
+  console.log("Recomputing worker ratings from seeded reviews...");
+  for (const [mockId, ratings] of ratingsByWorker.entries()) {
+    const avg = ratings.reduce((sum, r) => sum + r, 0) / ratings.length;
     await prisma.workerProfile.update({
       where: { id: workerProfileIdByMockId.get(mockId)! },
       data: { ratingAverage: Math.round(avg * 100) / 100, ratingCount: ratings.length }
     });
   }
 
-  // Cooperative dividends — same formula as
-  // admin-wallet-ops.controller.ts#distributeDividends (a worker's total
-  // completed JOB_PAYOUT earnings × their cooperative's
-  // dividendSharePercent), applied once here so the demo dashboard shows a
-  // real, traceable number rather than a hardcoded one. No worker has a
-  // prior DIVIDEND_PAYOUT yet, so this is "since all time" for every
-  // worker, matching what the real endpoint does for a first-ever run.
   console.log("Cooperative dividends...");
   for (const w of workerSeeds) {
     const workerProfileId = workerProfileIdByMockId.get(w.mockId)!;
@@ -480,212 +535,11 @@ async function main() {
         type: "DIVIDEND_PAYOUT" as CreditTransactionType,
         amount: dividendAmount,
         status: "COMPLETED" as CreditTransactionStatus,
-        settledAt: new Date()
+        settledAt: now
       }
     });
   }
 
-  // ---------------------------------------------------------------------
-  // Synthetic bookings covering every remaining Section 1.0 lifecycle
-  // stage the mock data doesn't reach on its own: REQUESTED,
-  // DISPATCHING_TOP3, DISPATCHING_POOL, ASSIGNED, CONFIRMED, IN_PROGRESS,
-  // COMPLETED (not yet reviewed/settled).
-  // ---------------------------------------------------------------------
-  console.log("Lifecycle-coverage bookings (REQUESTED through COMPLETED)...");
-  const now = new Date();
-  const cust1 = customerSeeds[0];
-  const cust2 = customerSeeds[1];
-  const cust1ProfileId = customerProfileIdByMockId.get("cust-1")!;
-  const cust2ProfileId = customerProfileIdByMockId.get("cust-2")!;
-  const plumbing = serviceData.find((s) => s.id === "plumbing")!;
-  const electrical = serviceData.find((s) => s.id === "electrical")!;
-  const caregiving = serviceData.find((s) => s.id === "caregiving")!;
-
-  // REQUESTED — no dispatch has run yet.
-  await insertBooking({
-    customerId: cust1ProfileId,
-    serviceCategoryId: "plumbing",
-    description: "Leaking overhead tank float valve needs replacement.",
-    address: cust1.address,
-    lng: cust1.lng,
-    lat: cust1.lat,
-    scheduledAt: null,
-    urgency: "NORMAL",
-    baseCharge: plumbing.baseRate,
-    hourlyRate: plumbing.hourlyRate,
-    estimatedTotal: plumbing.baseRate + plumbing.hourlyRate,
-    status: "REQUESTED",
-    createdAt: now
-  });
-
-  // DISPATCHING_TOP3 — Rajesh (worker-7) has an open offer, unanswered.
-  const dispatchingTop3Id = await insertBooking({
-    customerId: cust2ProfileId,
-    serviceCategoryId: "electrical",
-    description: "Ceiling fan wiring short-circuit needs urgent diagnosis.",
-    address: cust2.address,
-    lng: cust2.lng,
-    lat: cust2.lat,
-    scheduledAt: null,
-    urgency: "URGENT",
-    baseCharge: electrical.baseRate,
-    hourlyRate: electrical.hourlyRate,
-    estimatedTotal: electrical.baseRate + electrical.hourlyRate,
-    status: "DISPATCHING_TOP3",
-    createdAt: now
-  });
-  await prisma.dispatchLog.create({
-    data: {
-      bookingId: dispatchingTop3Id,
-      workerId: workerProfileIdByMockId.get("worker-7")!,
-      attemptNumber: "ATTEMPT_1" as DispatchAttempt,
-      distanceKm: 1.5,
-      continuityScore: 72,
-      offeredAt: now,
-      outcome: "OFFERED" as DispatchOutcome
-    }
-  });
-
-  // DISPATCHING_POOL — top-3 (Ravi, Priya) already timed out; pool offer
-  // now open to Amit.
-  const dispatchingPoolId = await insertBooking({
-    customerId: cust1ProfileId,
-    serviceCategoryId: "plumbing",
-    description: "Multiple bathroom taps need washer replacement across the flat.",
-    address: cust1.address,
-    lng: cust1.lng,
-    lat: cust1.lat,
-    scheduledAt: null,
-    urgency: "NORMAL",
-    baseCharge: plumbing.baseRate,
-    hourlyRate: plumbing.hourlyRate,
-    estimatedTotal: plumbing.baseRate + plumbing.hourlyRate,
-    status: "DISPATCHING_POOL",
-    createdAt: now
-  });
-  await prisma.dispatchLog.createMany({
-    data: [
-      { bookingId: dispatchingPoolId, workerId: workerProfileIdByMockId.get("worker-1")!, attemptNumber: "ATTEMPT_1", distanceKm: 0.9, continuityScore: 95, offeredAt: now, respondedAt: now, outcome: "TIMEOUT" },
-      { bookingId: dispatchingPoolId, workerId: workerProfileIdByMockId.get("worker-2")!, attemptNumber: "ATTEMPT_2", distanceKm: 2.1, continuityScore: 58, offeredAt: now, respondedAt: now, outcome: "TIMEOUT" },
-      { bookingId: dispatchingPoolId, workerId: workerProfileIdByMockId.get("worker-3")!, attemptNumber: "POOL", distanceKm: 6.4, continuityScore: 30, offeredAt: now, outcome: "OFFERED" }
-    ]
-  });
-
-  // ASSIGNED — Meena just accepted; she is now ON_JOB.
-  const meenaId = workerProfileIdByMockId.get("worker-8")!;
-  const assignedId = await insertBooking({
-    customerId: cust2ProfileId,
-    serviceCategoryId: "caregiving",
-    description: "Elderly care assistance needed for a week, daytime shift.",
-    address: cust2.address,
-    lng: cust2.lng,
-    lat: cust2.lat,
-    scheduledAt: null,
-    urgency: "NORMAL",
-    baseCharge: caregiving.baseRate,
-    hourlyRate: caregiving.hourlyRate,
-    estimatedTotal: caregiving.baseRate + caregiving.hourlyRate,
-    status: "ASSIGNED",
-    assignedWorkerId: meenaId,
-    createdAt: now
-  });
-  await prisma.dispatchLog.create({
-    data: { bookingId: assignedId, workerId: meenaId, attemptNumber: "ATTEMPT_1", distanceKm: 1.1, continuityScore: 88, offeredAt: now, respondedAt: now, outcome: "ACCEPTED" }
-  });
-  await prisma.workerProfile.update({ where: { id: meenaId }, data: { availabilityStatus: "ON_JOB", currentBookingId: assignedId } });
-
-  // CONFIRMED — Priya's booking, 60s auto-confirm already elapsed.
-  const priyaId = workerProfileIdByMockId.get("worker-2")!;
-  const confirmedId = await insertBooking({
-    customerId: cust2ProfileId,
-    serviceCategoryId: "plumbing",
-    description: "New RO water purifier plumbing connection install.",
-    address: cust2.address,
-    lng: cust2.lng,
-    lat: cust2.lat,
-    scheduledAt: null,
-    urgency: "NORMAL",
-    baseCharge: plumbing.baseRate,
-    hourlyRate: plumbing.hourlyRate,
-    estimatedTotal: plumbing.baseRate + plumbing.hourlyRate,
-    status: "CONFIRMED",
-    assignedWorkerId: priyaId,
-    confirmedAt: now,
-    createdAt: now
-  });
-  await prisma.dispatchLog.create({
-    data: { bookingId: confirmedId, workerId: priyaId, attemptNumber: "ATTEMPT_1", distanceKm: 2.0, continuityScore: 60, offeredAt: now, respondedAt: now, outcome: "ACCEPTED" }
-  });
-  await prisma.workerProfile.update({ where: { id: priyaId }, data: { availabilityStatus: "ON_JOB", currentBookingId: confirmedId } });
-
-  // IN_PROGRESS — Amit is on-site now.
-  const amitId = workerProfileIdByMockId.get("worker-3")!;
-  const inProgressId = await insertBooking({
-    customerId: cust1ProfileId,
-    serviceCategoryId: "plumbing",
-    description: "Bathroom floor drain trap replacement, ongoing.",
-    address: cust1.address,
-    lng: cust1.lng,
-    lat: cust1.lat,
-    scheduledAt: null,
-    urgency: "NORMAL",
-    baseCharge: plumbing.baseRate,
-    hourlyRate: plumbing.hourlyRate,
-    estimatedTotal: plumbing.baseRate + plumbing.hourlyRate,
-    status: "IN_PROGRESS",
-    assignedWorkerId: amitId,
-    confirmedAt: now,
-    startedAt: now,
-    createdAt: now
-  });
-  await prisma.dispatchLog.create({
-    data: { bookingId: inProgressId, workerId: amitId, attemptNumber: "ATTEMPT_1", distanceKm: 0.3, continuityScore: 90, offeredAt: now, respondedAt: now, outcome: "ACCEPTED" }
-  });
-  await prisma.workerProfile.update({ where: { id: amitId }, data: { availabilityStatus: "ON_JOB", currentBookingId: inProgressId } });
-
-  // COMPLETED — Rajesh finished; awaiting the customer's review. Invoice
-  // exists (created at completion, Section 4.5) but no PaymentTransaction/
-  // Review/CreditTransaction yet — those only land once the review is
-  // submitted (Section 1.0).
-  const rajeshId = workerProfileIdByMockId.get("worker-7")!;
-  const completedId = await insertBooking({
-    customerId: cust2ProfileId,
-    serviceCategoryId: "electrical",
-    description: "Kitchen chimney electrical point installation.",
-    address: cust2.address,
-    lng: cust2.lng,
-    lat: cust2.lat,
-    scheduledAt: null,
-    urgency: "NORMAL",
-    baseCharge: electrical.baseRate,
-    hourlyRate: electrical.hourlyRate,
-    estimatedTotal: electrical.baseRate + electrical.hourlyRate,
-    status: "COMPLETED",
-    assignedWorkerId: rajeshId,
-    confirmedAt: now,
-    startedAt: new Date(now.getTime() - 60 * 60 * 1000),
-    completedAt: now,
-    createdAt: new Date(now.getTime() - 60 * 60 * 1000)
-  });
-  await prisma.dispatchLog.create({
-    data: { bookingId: completedId, workerId: rajeshId, attemptNumber: "ATTEMPT_1", distanceKm: 1.0, continuityScore: 82, offeredAt: now, respondedAt: now, outcome: "ACCEPTED" }
-  });
-  const completedInvoice = await prisma.invoice.create({
-    data: {
-      bookingId: completedId,
-      baseCharge: electrical.baseRate,
-      hourlyCharge: electrical.hourlyRate,
-      platformFee: Math.round((electrical.baseRate + electrical.hourlyRate) * (COMMISSION_PERCENT / 100) * 100) / 100,
-      totalAmount: electrical.baseRate + electrical.hourlyRate
-    }
-  });
-  void completedInvoice;
-  // Worker is freed back to AVAILABLE once the job completes (Section 4.5).
-
-  // ---------------------------------------------------------------------
-  // Wallet/ledger extras — redemption in progress and one already settled,
-  // demonstrating Section 14.4's admin manual-settlement workflow.
-  // ---------------------------------------------------------------------
   console.log("Redemptions and settlement records...");
   const raviId = workerProfileIdByMockId.get("worker-1")!;
   const settledRedemption = await prisma.creditTransaction.create({
@@ -715,23 +569,55 @@ async function main() {
   await prisma.incentiveProgress.createMany({
     data: [
       { workerProfileId: raviId, title: "Complete 5 jobs this week", reward: 200, reason: "Weekly job-volume bonus", progress: 3, target: 5, expiry: new Date(now.getTime() + oneWeek), status: "PENDING" as IncentiveStatus },
-      { workerProfileId: priyaId, title: "5-star streak bonus", reward: 150, reason: "Three consecutive 5-star reviews", progress: 3, target: 3, expiry: new Date(now.getTime() + oneWeek), status: "COMPLETED" as IncentiveStatus },
-      { workerProfileId: amitId, title: "Weekend availability bonus", reward: 100, reason: "Available both weekend days", progress: 1, target: 2, expiry: new Date(now.getTime() - oneWeek), status: "EXPIRED" as IncentiveStatus }
+      { workerProfileId: workerProfileIdByMockId.get("worker-2")!, title: "5-star streak bonus", reward: 150, reason: "Three consecutive 5-star reviews", progress: 3, target: 3, expiry: new Date(now.getTime() + oneWeek), status: "COMPLETED" as IncentiveStatus },
+      { workerProfileId: workerProfileIdByMockId.get("worker-7")!, title: "Ten electrical jobs this month", reward: 400, reason: "Monthly category volume bonus", progress: 7, target: 10, expiry: new Date(now.getTime() + 2 * oneWeek), status: "PENDING" as IncentiveStatus },
+      { workerProfileId: workerProfileIdByMockId.get("worker-10")!, title: "Weekend availability bonus", reward: 100, reason: "Available both weekend days", progress: 1, target: 2, expiry: new Date(now.getTime() - oneWeek), status: "EXPIRED" as IncentiveStatus },
+      { workerProfileId: workerProfileIdByMockId.get("worker-15")!, title: "Refer a cooperative member", reward: 250, reason: "Membership growth drive", progress: 1, target: 1, expiry: new Date(now.getTime() + oneWeek), status: "COMPLETED" as IncentiveStatus }
     ]
   });
 
   // ---------------------------------------------------------------------
-  // Notifications (Section 18) — a few in-app events, mixed read/unread.
+  // Notifications (Section 18). Each one was collected while its booking was
+  // created, so every line refers to a booking that exists.
   // ---------------------------------------------------------------------
-  console.log("Notifications...");
+  const pendingWorkers = workerSeeds.filter((w) => w.verification === "PENDING");
+  recentEvents.push({
+    userId: workerUserIdByMockId.get("worker-1")!,
+    title: "Redemption settled",
+    body: "Your redemption of " + formatMoney(500) + " via bank transfer has been settled.",
+    at: minutesAfter(now, -180),
+    isRead: true
+  });
+  for (const w of pendingWorkers) {
+    const coopName = cooperativeData.find((c) => c.id === w.cooperativeId)!.name;
+    recentEvents.push({
+      userId: adminUser.id,
+      title: "Worker verification pending",
+      body: `${w.name} (${w.location}) applied to ${coopName} and is awaiting document review.`,
+      at: daysBefore(w.joinedDaysAgo),
+      isRead: false
+    });
+    recentEvents.push({
+      userId: workerUserIdByMockId.get(w.mockId)!,
+      title: "Application received",
+      body: "Your cooperative membership application is under review. You will be notified once the registrar approves it.",
+      at: daysBefore(w.joinedDaysAgo),
+      isRead: true
+    });
+  }
+
+  console.log(`Notifications (${recentEvents.length})...`);
   await prisma.notification.createMany({
-    data: [
-      { userId: customerUserIdByMockId.get("cust-2")!, audience: "USER" as NotificationAudience, title: "Worker assigned", body: "Meena Kumari has been assigned to your caregiving booking.", isRead: false, createdAt: now },
-      { userId: customerUserIdByMockId.get("cust-1")!, audience: "USER" as NotificationAudience, title: "Service completed", body: "Your plumbing booking has been completed. Please rate your experience.", isRead: false, createdAt: now },
-      { userId: workerUserIdByMockId.get("worker-7")!, audience: "USER" as NotificationAudience, title: "Job completed", body: "You marked the electrical booking as completed. Awaiting customer review.", isRead: true, createdAt: now },
-      { userId: workerUserIdByMockId.get("worker-1")!, audience: "USER" as NotificationAudience, title: "Redemption settled", body: "Your redemption of ₹500 via Bank Transfer (Mock) has been settled.", isRead: true, createdAt: now },
-      { userId: adminUser.id, audience: "USER" as NotificationAudience, title: "New worker registration", body: "8 workers are seeded and pre-approved for demo purposes.", isRead: true, createdAt: now }
-    ]
+    data: recentEvents
+      .sort((a, b) => b.at.getTime() - a.at.getTime())
+      .map((e) => ({
+        userId: e.userId,
+        audience: "USER" as NotificationAudience,
+        title: e.title,
+        body: e.body,
+        isRead: e.isRead,
+        createdAt: e.at
+      }))
   });
 
   console.log("\nSeed complete.\n");
