@@ -429,8 +429,8 @@ const app = createApp({
     // Demo login: one click fills in that role's seeded account and signs in.
     // "View demo dashboard" uses the admin account and opens its console.
     const demoAccounts = [
-      { role: "customer", label: "Customer", tag: "CUSTOMER", email: "deepika@example.com", password: "Customer@123" },
-      { role: "worker", label: "Worker", tag: "WORKER", email: "ravi.kumar@example.com", password: "Worker@123" },
+      { role: "customer", label: "Customer", tag: "CUSTOMER", email: "lavanya.krishnamoorthy.wsu@gmail.com", password: "Customer@123" },
+      { role: "worker", label: "Worker", tag: "WORKER", email: "senthilkumar.arumugam.wsu@gmail.com", password: "Worker@123" },
       { role: "admin", label: "Cooperative Admin", tag: "ADMIN", email: "registrar@worksetu.coop", password: "AdminPass@123" },
     ];
     const demoBusyRole = ref(null);

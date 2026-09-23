@@ -623,8 +623,8 @@ async function main() {
   console.log("\nSeed complete.\n");
   console.log("Demo credentials:");
   console.log("  Admin (super):", "registrar@worksetu.coop", "/", "AdminPass@123");
-  console.log("  Customer:     ", "deepika@example.com", "/", "Customer@123");
-  console.log("  Worker:       ", "ravi.kumar@example.com", "/", "Worker@123");
+  console.log("  Customer:     ", "lavanya.krishnamoorthy.wsu@gmail.com", "/", "Customer@123");
+  console.log("  Worker:       ", "senthilkumar.arumugam.wsu@gmail.com", "/", "Worker@123");
 }
 
 // Retry resilience, added after repeatedly observing transient Supabase
