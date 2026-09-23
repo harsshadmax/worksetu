@@ -213,8 +213,12 @@ const app = createApp({
     }
 
     function apiErrorMessage(err) {
-      if (err instanceof api.ApiError) return err.message;
-      return t("noDataFound");
+      if (err instanceof api.ApiError) {
+        if (err.status >= 500) return t("serverErrorMessage");
+        return err.message;
+      }
+      // fetch() only rejects when the request never got an answer.
+      return t("networkErrorMessage");
     }
 
     // ----------------------------------------------------
@@ -446,6 +450,17 @@ const app = createApp({
       }
     };
 
+    const clearAuthForm = () => {
+      authName.value = "";
+      authEmail.value = "";
+      authPhone.value = "";
+      authPassword.value = "";
+      authAddress.value = "";
+      authCoop.value = "";
+      authSkill.value = "";
+      authExperience.value = "";
+    };
+
     const handleRegister = async () => {
       if (authBusy.value) return;
       registerError.value = "";
@@ -466,6 +481,7 @@ const app = createApp({
             }
           });
           api.setAccessToken(res.token);
+          setSessionHint(true);
           startSession();
           await loadOwnProfile("CUSTOMER");
           await loadCatalog();
@@ -488,22 +504,17 @@ const app = createApp({
             }
           });
           api.setAccessToken(res.token);
+          setSessionHint(true);
           startSession();
           await loadOwnProfile("WORKER");
           currentView.value = "dashboard";
           await initializeRoleData("worker");
         }
+        registerError.value = "";
+        clearAuthForm();
       } catch (err) {
         registerError.value = apiErrorMessage(err);
       } finally {
-        authName.value = "";
-        authEmail.value = "";
-        authPhone.value = "";
-        authPassword.value = "";
-        authAddress.value = "";
-        authCoop.value = "";
-        authSkill.value = "";
-        authExperience.value = "";
         authBusy.value = false;
       }
     };

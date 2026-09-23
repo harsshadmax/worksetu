@@ -73,11 +73,62 @@ async function createOtpVerification(tx: Prisma.TransactionClient, userId: strin
   console.log(`[DEV OTP] ${channel} verification code for user ${userId}: ${code}`);
 }
 
+// Identities are stored in one canonical shape so the same person can't
+// register twice by varying the formatting. Email compares case-insensitively;
+// a phone keeps only its digits, dropping spaces, dashes, brackets and an
+// Indian country code -- the plain 10-digit form the seed data already uses.
+// Without this, "98765 43210" and "9876543210" were two different accounts,
+// and "Name@Example.com" could not sign in as "name@example.com".
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+// An identifier is whatever the sign-in box was given: an email or a phone.
+// Email matches case-insensitively so accounts stored before normalization
+// still sign in; the phone clause is dropped when the input holds no digits,
+// so an email can never match a row by an empty phone.
+export function identifierClauses(identifier: string) {
+  const email = normalizeEmail(identifier);
+  const phone = normalizePhone(identifier);
+  const clauses: Prisma.UserWhereInput[] = [{ email: { equals: email, mode: "insensitive" } }];
+  if (phone) clauses.push({ phone });
+  return clauses;
+}
+
+export function normalizePhone(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  return digits.length > 10 && digits.startsWith("91") ? digits.slice(-10) : digits;
+}
+
+// Says which field is taken. Registration already tells the caller that some
+// identity exists, so naming the field leaks nothing further, and without it
+// people retype a whole form without knowing which value to change.
 async function assertIdentityAvailable(email: string, phone: string) {
-  const existing = await prisma.user.findFirst({ where: { OR: [{ email }, { phone }] } });
-  if (existing) {
-    throw new AppError(409, "ACCOUNT_ALREADY_EXISTS", "An account with this email or phone already exists");
+  const [emailTaken, phoneTaken] = await Promise.all([
+    prisma.user.findFirst({ where: { email: { equals: email, mode: "insensitive" } }, select: { id: true } }),
+    prisma.user.findFirst({ where: { phone }, select: { id: true } })
+  ]);
+  if (emailTaken && phoneTaken) {
+    throw new AppError(409, "ACCOUNT_ALREADY_EXISTS", "An account with this email and phone number already exists");
   }
+  if (emailTaken) {
+    throw new AppError(409, "EMAIL_ALREADY_REGISTERED", "An account with this email already exists");
+  }
+  if (phoneTaken) {
+    throw new AppError(409, "PHONE_ALREADY_REGISTERED", "An account with this phone number already exists");
+  }
+}
+
+// A second request that slips past the check above loses the insert race on
+// the unique index; that is the same duplicate, not a server fault.
+function duplicateOrRethrow(err: unknown): never {
+  if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+    const target = String((err.meta as { target?: string | string[] } | undefined)?.target ?? "");
+    if (target.includes("phone")) throw new AppError(409, "PHONE_ALREADY_REGISTERED", "An account with this phone number already exists");
+    if (target.includes("email")) throw new AppError(409, "EMAIL_ALREADY_REGISTERED", "An account with this email already exists");
+    throw new AppError(409, "ACCOUNT_ALREADY_EXISTS", "An account with these details already exists");
+  }
+  throw err;
 }
 
 export interface RegisterCustomerInput {
@@ -95,7 +146,9 @@ export async function registerCustomer(input: RegisterCustomerInput, meta: Reque
   if (!input.acceptedTerms) {
     throw new AppError(400, "TERMS_NOT_ACCEPTED", "You must accept the terms to register");
   }
-  await assertIdentityAvailable(input.email, input.phone);
+  const email = normalizeEmail(input.email);
+  const phone = normalizePhone(input.phone);
+  await assertIdentityAvailable(email, phone);
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_COST);
 
   const user = await prisma.$transaction(async (tx) => {
@@ -103,8 +156,8 @@ export async function registerCustomer(input: RegisterCustomerInput, meta: Reque
       data: {
         role: "CUSTOMER",
         fullName: input.fullName,
-        email: input.email,
-        phone: input.phone,
+        email,
+        phone,
         passwordHash,
         acceptedTermsAt: new Date(),
         preference: { create: {} },
@@ -119,7 +172,7 @@ export async function registerCustomer(input: RegisterCustomerInput, meta: Reque
     `;
     await createOtpVerification(tx, created.id, "PHONE");
     return created;
-  });
+  }).catch(duplicateOrRethrow);
 
   const tokens = await issueTokenPair(user, meta);
   return { user, tokens };
@@ -142,7 +195,9 @@ export async function registerWorker(input: RegisterWorkerInput, meta: RequestMe
   if (!input.acceptedTerms) {
     throw new AppError(400, "TERMS_NOT_ACCEPTED", "You must accept the terms to register");
   }
-  await assertIdentityAvailable(input.email, input.phone);
+  const email = normalizeEmail(input.email);
+  const phone = normalizePhone(input.phone);
+  await assertIdentityAvailable(email, phone);
 
   const cooperative = await prisma.cooperative.findUnique({ where: { id: input.cooperativeId } });
   if (!cooperative) {
@@ -160,8 +215,8 @@ export async function registerWorker(input: RegisterWorkerInput, meta: RequestMe
       data: {
         role: "WORKER",
         fullName: input.fullName,
-        email: input.email,
-        phone: input.phone,
+        email,
+        phone,
         passwordHash,
         acceptedTermsAt: new Date(),
         preference: { create: {} },
@@ -183,14 +238,16 @@ export async function registerWorker(input: RegisterWorkerInput, meta: RequestMe
     `;
     await createOtpVerification(tx, created.id, "PHONE");
     return created;
-  });
+  }).catch(duplicateOrRethrow);
 
   const tokens = await issueTokenPair(user, meta);
   return { user, tokens };
 }
 
 export async function login(role: UserRole, identifier: string, password: string, meta: RequestMeta) {
-  const user = await prisma.user.findFirst({ where: { role, OR: [{ email: identifier }, { phone: identifier }] } });
+  const user = await prisma.user.findFirst({
+    where: { role, OR: identifierClauses(identifier) }
+  });
 
   // Section 9 — same generic error whether the account exists or not, to
   // avoid enumeration.
@@ -297,7 +354,9 @@ export async function logoutAll(userId: string): Promise<void> {
 }
 
 export async function requestPasswordReset(identifier: string): Promise<void> {
-  const user = await prisma.user.findFirst({ where: { OR: [{ email: identifier }, { phone: identifier }] } });
+  const user = await prisma.user.findFirst({
+    where: { OR: identifierClauses(identifier) }
+  });
   // Always the same outward behavior regardless of match — Section 9
   // enumeration mitigation, restated by Section 6.5.
   if (user && !user.deletedAt) {

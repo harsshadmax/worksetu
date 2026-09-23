@@ -1235,12 +1235,13 @@
                   <button
                     type="submit"
                     :disabled="authBusy"
-                    class="w-full py-3.5 bg-custom-primary text-white text-xs font-bold uppercase tracking-widest hover:bg-custom-dark disabled:opacity-60 transition duration-150 rounded-xl shadow-md hover:shadow-lg">
-                    <i v-if="authBusy" class="fa-solid fa-spinner fa-spin mr-1.5"></i>{{ t('register') }}
+                    class="w-full min-h-[54px] px-6 bg-custom-primary text-white text-sm font-bold uppercase tracking-widest hover:bg-custom-dark disabled:opacity-60 disabled:cursor-wait transition duration-150 rounded-xl shadow-md hover:shadow-lg flex items-center justify-center gap-2">
+                    <i v-if="authBusy" class="fa-solid fa-spinner fa-spin text-xs"></i>
+                    <span>{{ authBusy ? t('registeringLabel') : t('register') }}</span>
                   </button>
-                  <p class="text-center text-xs text-custom-sec mt-6">
-                    {{ t('alreadyHaveAccount') }}
-                    <a @click="currentView = 'login'" class="text-custom-primary font-bold cursor-pointer hover:underline">{{ t('loginLink') }}</a>
+                  <p class="text-center text-xs text-custom-sec mt-5">
+                    <span class="block mb-1">{{ t('alreadyHaveAccount') }}</span>
+                    <a @click="currentView = 'login'" class="text-custom-sec font-semibold cursor-pointer hover:text-custom-primary hover:underline">{{ t('loginLink') }}</a>
                   </p>
                 </form>
               </div>
@@ -2422,14 +2423,13 @@
                     <label class="block text-[10px] font-extrabold uppercase-track mb-1.5 text-custom-sec">{{ t('passwordPlaceholder') }}</label>
                     <input type="password" v-model="authPassword" required class="w-full px-4 py-2.5 rounded-xl border border-custom-border bg-custom-bg text-custom-main text-xs font-semibold focus:outline-none focus:border-custom-primary transition">
                   </div>
-                  <button type="submit" :disabled="authBusy" class="w-full py-3.5 bg-custom-primary hover:bg-custom-dark disabled:opacity-60 text-white text-xs font-bold uppercase-track rounded-xl shadow-sm transition flex items-center justify-center space-x-2">
-                    <i v-if="authBusy" class="fa-solid fa-spinner fa-spin"></i>
-                    <span>{{ t('register') }}</span>
-                    <i class="fa-solid fa-arrow-right text-[10px]"></i>
+                  <button type="submit" :disabled="authBusy" class="w-full min-h-[54px] px-6 bg-custom-primary hover:bg-custom-dark disabled:opacity-60 disabled:cursor-wait text-white text-sm font-bold uppercase-track rounded-xl shadow-md hover:shadow-lg transition flex items-center justify-center gap-2">
+                    <i v-if="authBusy" class="fa-solid fa-spinner fa-spin text-xs"></i>
+                    <span>{{ authBusy ? t('registeringLabel') : t('register') }}</span>
                   </button>
-                  <p class="text-center text-xs text-custom-sec mt-4">
-                    {{ t('alreadyHaveAccount') }}
-                    <a @click="currentView = 'login'" class="text-custom-primary font-bold cursor-pointer hover:underline">{{ t('loginLink') }}</a>
+                  <p class="text-center text-xs text-custom-sec mt-5">
+                    <span class="block mb-1">{{ t('alreadyHaveAccount') }}</span>
+                    <a @click="currentView = 'login'" class="text-custom-sec font-semibold cursor-pointer hover:text-custom-primary hover:underline">{{ t('loginLink') }}</a>
                   </p>
                 </form>
               </div>
