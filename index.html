@@ -195,7 +195,7 @@
     }
 
     /* ---------------------------------------------------- */
-    /* PREMIUM INTERACTIVE MOTION SYSTEM (SIH 2026)         */
+    /* PREMIUM INTERACTIVE MOTION SYSTEM                     */
     /* ---------------------------------------------------- --> */
     html {
       scroll-behavior: smooth;
@@ -245,7 +245,7 @@
     }
 
     /* Scroll Reveal & Stagger Animation Classes (Requirement 2 & 3) */
-    .scroll-reveal {
+    .reveal-armed .scroll-reveal {
       opacity: 0;
       transform: translateY(24px);
       transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
@@ -265,7 +265,7 @@
       transform: translateY(0) scale(1);
     }
 
-    .stagger-item {
+    .reveal-armed .stagger-item {
       opacity: 0;
       transform: translateY(18px);
       transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
@@ -610,7 +610,6 @@
           <div>
             <div class="flex items-center space-x-2">
               <h1 class="text-base sm:text-lg font-black tracking-wide text-custom-main uppercase leading-none">{{ t('appName') }}</h1>
-              <span class="hidden sm:inline-block px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200 rounded">SIH 2026</span>
             </div>
             <p class="text-[9px] uppercase tracking-wider text-custom-sec font-semibold mt-0.5 hidden sm:block">Cooperative Gig Services</p>
           </div>
@@ -905,7 +904,7 @@
                 </div>
 
                 <h3 class="text-base font-black text-custom-main uppercase tracking-wide">Worksetu Cooperative</h3>
-                <p class="text-xs text-custom-sec font-medium mt-1">Smart India Hackathon 2026 Initiative</p>
+                <p class="text-xs text-custom-sec font-medium mt-1">Registered Cooperative Labour Network</p>
 
                 <div class="mt-6 pt-5 border-t border-custom-border/60 grid grid-cols-2 gap-2.5 text-left">
                   <div class="p-2.5 rounded-xl bg-custom-very-light-blue border border-custom-border/50">
@@ -1121,25 +1120,32 @@
                     <i v-if="authBusy" class="fa-solid fa-spinner fa-spin mr-1.5"></i>{{ t('loginButton') }}
                   </button>
 
-                  <!-- Quick Sign-in Helper -->
-                  <div class="mt-6 p-4 bg-custom-very-light-blue rounded-2xl border border-custom-border text-xs text-left text-custom-sec space-y-2">
-                    <p class="font-bold text-custom-primary mb-1 uppercase-track text-[10px] flex items-center">
-                      <i class="fa-solid fa-bolt text-amber-500 mr-1.5"></i>{{ t('demoCredentials') }}
-                    </p>
+                  <!-- Demo login: one click signs in as that role's seeded account -->
+                  <div class="pt-5 border-t border-custom-border/60">
+                    <p class="text-[10px] font-extrabold uppercase-track text-custom-sec mb-3">{{ t('demoLoginLabel') }}</p>
+                    <div class="space-y-2">
+                      <button
+                        v-for="d in demoAccounts" :key="d.role"
+                        type="button"
+                        @click="demoLogin(d.role)"
+                        :disabled="authBusy"
+                        class="w-full py-3 px-4 rounded-xl border border-custom-border bg-custom-card text-custom-main text-xs font-bold hover:border-custom-primary/60 hover:text-custom-primary transition flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-wait">
+                        <i v-if="authBusy && demoBusyRole === d.role" class="fa-solid fa-circle-notch fa-spin text-[11px]"></i>
+                        <span>{{ d.label }}</span>
+                        <span class="font-mono text-[10px] text-custom-sec tracking-wider">{{ d.tag }}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="pt-5 border-t border-custom-border/60">
                     <button
                       type="button"
+                      @click="demoLogin('admin', true)"
                       :disabled="authBusy"
-                      @click="authEmail='deepika@example.com'; authPassword='Customer@123'; handleLogin()"
-                      class="w-full text-custom-main hover:text-custom-primary font-bold text-left block text-xs py-1.5 px-2.5 rounded-lg bg-custom-card border border-custom-border/60 hover:border-custom-primary/50 transition">
-                      Deepika Ramaswamy (Adyar, Chennai) &rarr;
+                      class="w-full py-3.5 bg-custom-primary hover:bg-custom-dark text-white text-xs font-bold uppercase-track rounded-xl shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-wait">
+                      <i v-if="authBusy && demoBusyRole === 'dashboard'" class="fa-solid fa-circle-notch fa-spin text-[11px]"></i>
+                      <span>{{ authBusy && demoBusyRole === 'dashboard' ? t('loadingLabel') : t('viewDemoDashboard') }}</span>
                     </button>
-                    <button
-                      type="button"
-                      :disabled="authBusy"
-                      @click="authEmail='anand@example.com'; authPassword='Customer@123'; handleLogin()"
-                      class="w-full text-custom-main hover:text-custom-primary font-bold text-left block text-xs py-1.5 px-2.5 rounded-lg bg-custom-card border border-custom-border/60 hover:border-custom-primary/50 transition">
-                      Anand Verma (Connaught Place, New Delhi) &rarr;
-                    </button>
+                    <p class="text-center text-[11px] text-custom-sec mt-2">{{ t('viewDemoDashboardHint') }}</p>
                   </div>
 
                   <p class="text-center text-xs text-custom-sec mt-6">
@@ -2304,25 +2310,32 @@
                     <i class="fa-solid fa-arrow-right text-[10px]"></i>
                   </button>
 
-                  <!-- Quick Sign-in Helper: accounts created by server/prisma/seed.ts -->
-                  <div class="mt-6 p-4 bg-custom-very-light-blue border border-custom-border rounded-2xl text-xs text-left text-custom-sec space-y-2">
-                    <p class="font-bold text-custom-primary uppercase-track text-[10px] flex items-center">
-                      <i class="fa-solid fa-bolt mr-1.5"></i>{{ t('demoCredentials') }}
-                    </p>
+                  <!-- Demo login: one click signs in as that role's seeded account -->
+                  <div class="pt-5 border-t border-custom-border/60">
+                    <p class="text-[10px] font-extrabold uppercase-track text-custom-sec mb-3">{{ t('demoLoginLabel') }}</p>
+                    <div class="space-y-2">
+                      <button
+                        v-for="d in demoAccounts" :key="d.role"
+                        type="button"
+                        @click="demoLogin(d.role)"
+                        :disabled="authBusy"
+                        class="w-full py-3 px-4 rounded-xl border border-custom-border bg-custom-card text-custom-main text-xs font-bold hover:border-custom-primary/60 hover:text-custom-primary transition flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-wait">
+                        <i v-if="authBusy && demoBusyRole === d.role" class="fa-solid fa-circle-notch fa-spin text-[11px]"></i>
+                        <span>{{ d.label }}</span>
+                        <span class="font-mono text-[10px] text-custom-sec tracking-wider">{{ d.tag }}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="pt-5 border-t border-custom-border/60">
                     <button
                       type="button"
+                      @click="demoLogin('admin', true)"
                       :disabled="authBusy"
-                      @click="authEmail='ravi.kumar@example.com'; authPassword='Worker@123'; handleLogin()"
-                      class="text-custom-main hover:text-custom-primary font-bold text-left block transition py-1.5 px-2.5 rounded-lg bg-custom-card border border-custom-border/60 hover:border-custom-primary/50 w-full">
-                      Ravi Kumar &bull; {{ getServiceName('plumbing') }} (Chennai)
+                      class="w-full py-3.5 bg-custom-primary hover:bg-custom-dark text-white text-xs font-bold uppercase-track rounded-xl shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-wait">
+                      <i v-if="authBusy && demoBusyRole === 'dashboard'" class="fa-solid fa-circle-notch fa-spin text-[11px]"></i>
+                      <span>{{ authBusy && demoBusyRole === 'dashboard' ? t('loadingLabel') : t('viewDemoDashboard') }}</span>
                     </button>
-                    <button
-                      type="button"
-                      :disabled="authBusy"
-                      @click="authEmail='rajesh.kannan@example.com'; authPassword='Worker@123'; handleLogin()"
-                      class="text-custom-main hover:text-custom-primary font-bold text-left block transition py-1.5 px-2.5 rounded-lg bg-custom-card border border-custom-border/60 hover:border-custom-primary/50 w-full">
-                      Rajesh Kannan &bull; {{ getServiceName('electrical') }} (Chennai)
-                    </button>
+                    <p class="text-center text-[11px] text-custom-sec mt-2">{{ t('viewDemoDashboardHint') }}</p>
                   </div>
 
                   <p class="text-center text-xs text-custom-sec mt-6">
@@ -3511,18 +3524,32 @@
                     <i class="fa-solid fa-arrow-right text-[10px]"></i>
                   </button>
 
-                  <!-- Quick Login: seeded super-admin (server/prisma/seed.ts) -->
-                  <div class="mt-6 p-4 bg-custom-very-light-blue border border-custom-border rounded-2xl text-xs text-left text-custom-sec space-y-1.5">
-                    <p class="font-bold text-custom-primary uppercase-track text-[10px] flex items-center">
-                      <i class="fa-solid fa-bolt mr-1.5"></i>{{ t('quickAccessCredentials') }}
-                    </p>
+                  <!-- Demo login: one click signs in as that role's seeded account -->
+                  <div class="pt-5 border-t border-custom-border/60">
+                    <p class="text-[10px] font-extrabold uppercase-track text-custom-sec mb-3">{{ t('demoLoginLabel') }}</p>
+                    <div class="space-y-2">
+                      <button
+                        v-for="d in demoAccounts" :key="d.role"
+                        type="button"
+                        @click="demoLogin(d.role)"
+                        :disabled="authBusy"
+                        class="w-full py-3 px-4 rounded-xl border border-custom-border bg-custom-card text-custom-main text-xs font-bold hover:border-custom-primary/60 hover:text-custom-primary transition flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-wait">
+                        <i v-if="authBusy && demoBusyRole === d.role" class="fa-solid fa-circle-notch fa-spin text-[11px]"></i>
+                        <span>{{ d.label }}</span>
+                        <span class="font-mono text-[10px] text-custom-sec tracking-wider">{{ d.tag }}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="pt-5 border-t border-custom-border/60">
                     <button
                       type="button"
+                      @click="demoLogin('admin', true)"
                       :disabled="authBusy"
-                      @click="authEmail='registrar@worksetu.coop'; authPassword='AdminPass@123'; handleLogin()"
-                      class="text-custom-main hover:text-custom-primary font-bold text-left block transition py-1.5 px-2.5 rounded-lg bg-custom-card border border-custom-border/60 w-full">
-                      Registrar (Super Admin) &rarr;
+                      class="w-full py-3.5 bg-custom-primary hover:bg-custom-dark text-white text-xs font-bold uppercase-track rounded-xl shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-wait">
+                      <i v-if="authBusy && demoBusyRole === 'dashboard'" class="fa-solid fa-circle-notch fa-spin text-[11px]"></i>
+                      <span>{{ authBusy && demoBusyRole === 'dashboard' ? t('loadingLabel') : t('viewDemoDashboard') }}</span>
                     </button>
+                    <p class="text-center text-[11px] text-custom-sec mt-2">{{ t('viewDemoDashboardHint') }}</p>
                   </div>
                 </form>
               </div>

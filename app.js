@@ -66,15 +66,17 @@ const app = createApp({
     // Customer Booking State
     // ----------------------------------------------------
     const customerBookings = ref([]); // list summaries (GET /customers/me/bookings)
-    const activeBookingId = ref(localStorage.getItem("activeBookingId_sih2026") || null);
+    const ACTIVE_BOOKING_KEY = "activeBookingId";
+    const activeBookingId = ref(localStorage.getItem(ACTIVE_BOOKING_KEY) || localStorage.getItem("activeBookingId_sih2026") || null);
     const activeBooking = ref(null); // full detail (GET /bookings/:id)
     const dispatchCandidates = ref({ phase: null, candidates: [] });
     const notifications = ref([]);
     const unreadNotificationCount = computed(() => notifications.value.filter((n) => !n.isRead).length);
 
     watch(activeBookingId, (newId) => {
-      if (newId) localStorage.setItem("activeBookingId_sih2026", newId);
-      else localStorage.removeItem("activeBookingId_sih2026");
+      localStorage.removeItem("activeBookingId_sih2026");
+      if (newId) localStorage.setItem(ACTIVE_BOOKING_KEY, newId);
+      else localStorage.removeItem(ACTIVE_BOOKING_KEY);
     });
 
     const requestForm = ref({
@@ -380,6 +382,7 @@ const app = createApp({
     }
 
     const handleLogin = async () => {
+      if (authBusy.value) return;
       loginError.value = "";
       authBusy.value = true;
       apiSlow.value = false;
@@ -419,7 +422,32 @@ const app = createApp({
       }
     };
 
+    // Demo login: one click fills in that role's seeded account and signs in.
+    // "View demo dashboard" uses the admin account and opens its console.
+    const demoAccounts = [
+      { role: "customer", label: "Customer", tag: "CUSTOMER", email: "deepika@example.com", password: "Customer@123" },
+      { role: "worker", label: "Worker", tag: "WORKER", email: "ravi.kumar@example.com", password: "Worker@123" },
+      { role: "admin", label: "Cooperative Admin", tag: "ADMIN", email: "registrar@worksetu.coop", password: "AdminPass@123" },
+    ];
+    const demoBusyRole = ref(null);
+    const demoLogin = async (role, viaDashboard = false) => {
+      if (authBusy.value) return;
+      const acct = demoAccounts.find((a) => a.role === role);
+      demoBusyRole.value = viaDashboard ? "dashboard" : role;
+      loginError.value = "";
+      currentRole.value = role;
+      currentView.value = "login";
+      authEmail.value = acct.email;
+      authPassword.value = acct.password;
+      try {
+        await handleLogin();
+      } finally {
+        demoBusyRole.value = null;
+      }
+    };
+
     const handleRegister = async () => {
+      if (authBusy.value) return;
       registerError.value = "";
       authBusy.value = true;
       try {
@@ -1043,7 +1071,6 @@ const app = createApp({
         currentRole.value = "landing";
         currentView.value = "home";
       }
-      await bootData;
 
       api.onExpired(() => {
         // Mirrors handleLogout's cleanup: this fires on a passive expiry
@@ -1065,7 +1092,11 @@ const app = createApp({
 
       setupLandingStatsObserver();
 
-      window.addEventListener("scroll", () => {
+      // One rAF-batched handler instead of a layout read plus two style
+      // writes on every scroll event.
+      let scrollTicking = false;
+      const paintScroll = () => {
+        scrollTicking = false;
         const winScroll = document.documentElement.scrollTop || document.body.scrollTop;
         const height = document.documentElement.scrollHeight - document.documentElement.clientHeight;
         const scrolled = height > 0 ? (winScroll / height) * 100 : 0;
@@ -1074,7 +1105,12 @@ const app = createApp({
         document.querySelectorAll(".parallax-bg").forEach((el) => {
           el.style.transform = `translateY(${winScroll * 0.15}px)`;
         });
-      });
+      };
+      window.addEventListener("scroll", () => {
+        if (scrollTicking) return;
+        scrollTicking = true;
+        requestAnimationFrame(paintScroll);
+      }, { passive: true });
 
       // Re-armed on every role/view/tab change via the watch() below --
       // confirmed live (alongside the identical pattern in
@@ -1085,6 +1121,7 @@ const app = createApp({
       // dominant contributor to the reported lag, since it fires on every
       // click that changes currentRole/currentView/adminTab, not only auth.
       let scrollRevealObserver = null;
+      let revealFired = false;
       const setupScrollReveal = () => {
         if (typeof IntersectionObserver === "undefined") return;
         if (scrollRevealObserver) {
@@ -1095,6 +1132,7 @@ const app = createApp({
           (entries) => {
             entries.forEach((entry) => {
               if (entry.isIntersecting) {
+                revealFired = true;
                 entry.target.classList.add("is-visible");
                 entry.target.querySelectorAll(".stagger-item").forEach((child, index) => {
                   setTimeout(() => child.classList.add("is-visible"), index * 80);
@@ -1104,9 +1142,19 @@ const app = createApp({
           },
           { threshold: 0.05 }
         );
+        document.documentElement.classList.add("reveal-armed");
         document.querySelectorAll(".scroll-reveal").forEach((el) => scrollRevealObserver.observe(el));
       };
-      setTimeout(setupScrollReveal, 100);
+      const revealEverything = () => {
+        document.documentElement.classList.remove("reveal-armed");
+        document.querySelectorAll(".scroll-reveal, .stagger-item").forEach((el) => el.classList.add("is-visible"));
+      };
+      setupScrollReveal();
+      // Safety net: if nothing has revealed shortly after boot, show the
+      // page rather than leaving it blank.
+      setTimeout(() => {
+        if (!revealFired) revealEverything();
+      }, 1200);
 
       watch([currentRole, currentView, adminTab], () => {
         setTimeout(setupScrollReveal, 150);
@@ -1135,6 +1183,9 @@ const app = createApp({
         if (prev) prev.remove();
         btn.appendChild(circle);
       });
+
+      // Stats and catalog fill in when they land; nothing above waits on them.
+      await bootData;
     });
 
     onUnmounted(() => {
@@ -1925,6 +1976,9 @@ const app = createApp({
       authServiceRadiusKm,
       handleLogin,
       handleRegister,
+      demoAccounts,
+      demoBusyRole,
+      demoLogin,
       handleLogout,
 
       services,
@@ -2204,7 +2258,9 @@ app.component("animated-number", {
       return formatted;
     };
 
+    let animationStarted = false;
     const triggerAnimation = (newVal, oldVal = 0) => {
+      animationStarted = true;
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
       const target = getNumericValue(newVal);
       const start = getNumericValue(oldVal);
@@ -2227,8 +2283,8 @@ app.component("animated-number", {
 
     watch(
       () => props.value,
-      (newVal, oldVal) => {
-        if (hasAnimated) triggerAnimation(newVal, oldVal);
+      (newVal) => {
+        if (animationStarted) triggerAnimation(newVal, getNumericValue(displayValue.value));
         else displayValue.value = formatValue(0);
       }
     );

@@ -12,18 +12,26 @@ const LNG = z.number().min(68.0).max(97.5);
 const REFRESH_COOKIE_NAME = "refreshToken";
 const REFRESH_COOKIE_PATH = "/api/v1/auth/refresh";
 
+// The deployed frontend (worksetu-web.onrender.com) and this API
+// (worksetu-api.onrender.com) count as different sites in the browser, so a
+// SameSite=Strict refresh cookie is never sent back on the refresh call and
+// the session is lost on every page reload. Cross-site delivery requires
+// SameSite=None together with Secure; local development is same-origin,
+// where Lax works without HTTPS.
+const CROSS_SITE_COOKIE = process.env.NODE_ENV === "production";
+const REFRESH_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: CROSS_SITE_COOKIE,
+  sameSite: CROSS_SITE_COOKIE ? ("none" as const) : ("lax" as const),
+  path: REFRESH_COOKIE_PATH
+};
+
 function setRefreshCookie(res: Response, token: string, expiresAt: Date) {
-  res.cookie(REFRESH_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    path: REFRESH_COOKIE_PATH,
-    expires: expiresAt
-  });
+  res.cookie(REFRESH_COOKIE_NAME, token, { ...REFRESH_COOKIE_OPTIONS, expires: expiresAt });
 }
 
 function clearRefreshCookie(res: Response) {
-  res.clearCookie(REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
+  res.clearCookie(REFRESH_COOKIE_NAME, REFRESH_COOKIE_OPTIONS);
 }
 
 export const customerRegisterSchema = z.object({
