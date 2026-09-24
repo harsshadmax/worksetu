@@ -397,6 +397,18 @@ async function main() {
         where: { id: workerProfileId },
         data: { availabilityStatus: "ON_JOB", currentBookingId: bookingId }
       });
+      // A worker who is on the way is part-way there, not still at home, so
+      // the tracking screen opens on a believable distance. The point sits on
+      // the line between the two addresses, closer for later stages.
+      const remaining = plan.status === "ASSIGNED" ? 0.45 : plan.status === "CONFIRMED" ? 0.14 : 0;
+      const enRouteLng = cust.lng + (workerSeed!.lng - cust.lng) * remaining;
+      const enRouteLat = cust.lat + (workerSeed!.lat - cust.lat) * remaining;
+      await prisma.$executeRaw`
+        UPDATE worker_profiles
+        SET "currentLocation" = ST_SetSRID(ST_MakePoint(${enRouteLng}, ${enRouteLat}), 4326),
+            "lastLocationAt" = ${minutesAfter(now, -2)}
+        WHERE id = ${workerProfileId}
+      `;
     }
 
     // An invoice exists from completion onward; payment, review and payout

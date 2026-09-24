@@ -290,7 +290,7 @@ export function buildBookings(): BookingPlan[] {
       status: "REQUESTED", rating: null, review: null
     },
     {
-      customerMockId: "cust-2", workerMockId: null, serviceId: "electrical",
+      customerMockId: "cust-6", workerMockId: null, serviceId: "electrical",
       description: "Ceiling fan wiring short-circuit needs urgent diagnosis.",
       daysAgo: 0, hour: 10, minute: 5, hoursBilled: 1, urgency: "URGENT",
       status: "DISPATCHING_TOP3", rating: null, review: null,
@@ -310,7 +310,7 @@ export function buildBookings(): BookingPlan[] {
       status: "ASSIGNED", rating: null, review: null
     },
     {
-      customerMockId: "cust-6", workerMockId: "worker-9", serviceId: "electrical",
+      customerMockId: "cust-2", workerMockId: "worker-9", serviceId: "electrical",
       description: "MCB trips every time the air conditioner starts.",
       daysAgo: 0, hour: 12, minute: 0, hoursBilled: 2, urgency: "NORMAL",
       status: "CONFIRMED", rating: null, review: null

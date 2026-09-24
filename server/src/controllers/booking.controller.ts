@@ -93,7 +93,7 @@ export const getBooking = asyncHandler(async (req: AuthenticatedRequest, res: Re
     where: { id: req.params.id },
     include: {
       customer: true,
-      assignedWorker: { include: { user: true } }
+      assignedWorker: { include: { user: true, cooperative: true } }
     }
   });
 
@@ -110,6 +110,39 @@ export const getBooking = asyncHandler(async (req: AuthenticatedRequest, res: Re
     select: { respondedAt: true }
   });
 
+  // Tracking needs where both ends of the job are. Geometry columns are
+  // Unsupported in the Prisma schema, so they come out through the same raw
+  // ST_X/ST_Y read the live-operations map already uses -- no second source
+  // of worker position.
+  const [places] = await prisma.$queryRaw<
+    {
+      customerLng: number | null;
+      customerLat: number | null;
+      workerLng: number | null;
+      workerLat: number | null;
+      lastLocationAt: Date | null;
+    }[]
+  >`
+    SELECT
+      ST_X(b."customerLocation") AS "customerLng",
+      ST_Y(b."customerLocation") AS "customerLat",
+      ST_X(COALESCE(wp."currentLocation", wp."homeLocation")) AS "workerLng",
+      ST_Y(COALESCE(wp."currentLocation", wp."homeLocation")) AS "workerLat",
+      wp."lastLocationAt" AS "lastLocationAt"
+    FROM bookings b
+    LEFT JOIN worker_profiles wp ON wp.id = b."assignedWorkerId"
+    WHERE b.id = ${booking.id}
+  `;
+
+  const hasWorkerPoint =
+    places?.workerLat !== null && places?.workerLat !== undefined && places?.workerLng !== null && places?.workerLng !== undefined;
+  const hasCustomerPoint =
+    places?.customerLat !== null && places?.customerLat !== undefined && places?.customerLng !== null && places?.customerLng !== undefined;
+  const distanceKm =
+    hasWorkerPoint && hasCustomerPoint
+      ? Math.round(haversineKm(places!.workerLat!, places!.workerLng!, places!.customerLat!, places!.customerLng!) * 10) / 10
+      : null;
+
   const timeline = [
     { stage: "REQUESTED", at: booking.createdAt },
     { stage: "ASSIGNED", at: acceptedDispatch?.respondedAt ?? null },
@@ -123,17 +156,75 @@ export const getBooking = asyncHandler(async (req: AuthenticatedRequest, res: Re
   return res.json({
     id: booking.id,
     status: booking.status,
+    // Whether this deployment exposes the demo controls, so the client does
+    // not offer a button that 404s in production.
+    demoMode: Boolean(Number(process.env.DEMO_AUTO_ACCEPT_SECONDS ?? 0)),
     estimatedTotal: Number(booking.estimatedTotal),
+    // What the customer needs to recognise the job on the tracking screen.
+    serviceCategoryId: booking.serviceCategoryId,
+    description: booking.description,
+    address: booking.address,
+    urgency: booking.urgency,
+    createdAt: booking.createdAt,
+    scheduledAt: booking.scheduledAt,
+    customerLocation: hasCustomerPoint ? { lat: places!.customerLat, lng: places!.customerLng } : null,
     worker: booking.assignedWorker
       ? {
           id: booking.assignedWorker.id,
           name: booking.assignedWorker.user.fullName,
           phone: booking.assignedWorker.user.phone,
-          avatarUrl: booking.assignedWorker.user.avatarUrl
+          avatarUrl: booking.assignedWorker.user.avatarUrl,
+          cooperative: booking.assignedWorker.cooperative?.name ?? null,
+          rating: Number(booking.assignedWorker.ratingAverage),
+          ratingCount: booking.assignedWorker.ratingCount,
+          availabilityStatus: booking.assignedWorker.availabilityStatus,
+          // Null while the worker has never pinged: the client says
+          // "location unavailable" rather than inventing a position.
+          location: hasWorkerPoint ? { lat: places!.workerLat, lng: places!.workerLng } : null,
+          lastLocationAt: places?.lastLocationAt ?? null,
+          distanceKm
         }
       : null,
     timeline
   });
+});
+
+// Demo mode only (DEMO_AUTO_ACCEPT_SECONDS). The customer-facing "simulate
+// next update" control needs the booking to move forward, but the transitions
+// after assignment belong to the worker, and the signed-in customer must not
+// be able to call worker endpoints. This walks the booking one step along the
+// same state machine, for the customer's own booking, and 404s when demo mode
+// is off so production exposes nothing.
+// Follows the same legal transitions as the state machine: a booking goes
+// ASSIGNED -> CONFIRMED (worker on the way) -> IN_PROGRESS -> COMPLETED.
+const DEMO_STEP: Partial<Record<string, "CONFIRMED" | "IN_PROGRESS" | "COMPLETED">> = {
+  ASSIGNED: "CONFIRMED",
+  CONFIRMED: "IN_PROGRESS",
+  IN_PROGRESS: "COMPLETED"
+};
+
+export const demoAdvanceBooking = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  if (!Number(process.env.DEMO_AUTO_ACCEPT_SECONDS ?? 0)) {
+    throw new AppError(404, "ROUTE_NOT_FOUND", "The requested route does not exist");
+  }
+
+  const booking = await prisma.booking.findUnique({
+    where: { id: req.params.id },
+    include: { customer: true }
+  });
+  if (!booking || booking.customer.userId !== req.user!.id) {
+    throw new AppError(404, "BOOKING_NOT_FOUND", "Booking not found");
+  }
+
+  const next = DEMO_STEP[booking.status];
+  if (!next) {
+    return res.json({ status: booking.status, advanced: false });
+  }
+
+  await transitionBookingStatus(booking.id, next);
+  const updated = await prisma.booking.findUniqueOrThrow({ where: { id: booking.id } });
+  io.to(`booking:${booking.id}`).emit("dispatch:update", { bookingId: booking.id, phase: updated.status });
+  return res.json({ status: updated.status, advanced: true });
 });
 
 export const listMyBookings = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {

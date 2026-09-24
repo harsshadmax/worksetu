@@ -24,6 +24,7 @@ import { requestLogger } from "./middleware/request-logger";
 import { errorHandler, notFoundHandler } from "./utils/app-error";
 import { io } from "./lib/socket";
 import { startReconciliationSweep } from "./services/dispatch-reconciliation.service";
+import { startDemoPresenceHeartbeat } from "./services/dispatch.service";
 import { serverTiming } from "./lib/request-timing";
 
 const app = express();
@@ -87,6 +88,7 @@ if (require.main === module) {
     console.log(`Worksetu API listening on port ${PORT}`);
   });
   startReconciliationSweep(); // Section 11.4
+  startDemoPresenceHeartbeat(); // demo mode only; no-op unless DEMO_AUTO_ACCEPT_SECONDS is set
 }
 
 export default app;

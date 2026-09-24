@@ -18,6 +18,8 @@ router.post(
 );
 router.get("/:id", requireAnyRole, authenticatedRateLimit, bookingController.getBooking);
 router.post("/:id/cancel", requireAnyRole, authenticatedRateLimit, bookingController.cancelBooking);
+// Demo mode only; 404s unless DEMO_AUTO_ACCEPT_SECONDS is set.
+router.post("/:id/demo-advance", requireCustomer, authenticatedRateLimit, bookingController.demoAdvanceBooking);
 router.patch("/:id/start", requireProvider, authenticatedRateLimit, bookingController.startBooking);
 router.patch(
   "/:id/complete",

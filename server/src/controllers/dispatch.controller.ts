@@ -4,10 +4,8 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { AuthenticatedRequest } from "../middleware/auth";
 import { acquireBookingLock, redis } from "../lib/redis-lock";
-import { transitionBookingStatus } from "../services/booking-state-machine.service";
-import { io } from "../lib/socket";
 import { asyncHandler, AppError, sendValidationError } from "../utils/app-error";
-import { dispatchNotification } from "../services/notification-dispatcher.service";
+import { acceptDispatchOffer } from "../services/dispatch.service";
 
 const respondSchema = z.object({
   response: z.enum(["ACCEPT", "DECLINE"])
@@ -55,60 +53,7 @@ export const respondToDispatch = asyncHandler(async (req: AuthenticatedRequest, 
   }
 
   try {
-    await prisma.$transaction(async (tx) => {
-      const booking = await tx.booking.findUniqueOrThrow({ where: { id: dispatchLog.bookingId } });
-      if (booking.assignedWorkerId) {
-        throw new Error("ALREADY_ASSIGNED");
-      }
-      await tx.dispatchLog.update({
-        where: { id: dispatchLog.id },
-        data: { outcome: "ACCEPTED", respondedAt: new Date() }
-      });
-      await tx.booking.update({
-        where: { id: dispatchLog.bookingId },
-        data: { status: "ASSIGNED", assignedWorkerId: dispatchLog.workerId, lockExpiresAt: null }
-      });
-      await tx.workerProfile.update({
-        where: { id: dispatchLog.workerId },
-        data: { availabilityStatus: "ON_JOB", currentBookingId: dispatchLog.bookingId }
-      });
-      await tx.auditLog.create({
-        data: {
-          actorId: req.user!.id,
-          action: "BOOKING_ACCEPTED",
-          entityType: "Booking",
-          entityId: dispatchLog.bookingId
-        }
-      });
-    });
-
-    await redis.publish(`dispatch-response:${dispatchLog.id}`, "ACCEPTED");
-    io.to(`booking:${dispatchLog.bookingId}`).emit("dispatch:update", {
-      bookingId: dispatchLog.bookingId,
-      phase: "ASSIGNED",
-      candidateStatus: { workerId: dispatchLog.workerId, offerStatus: "ACCEPTED" }
-    });
-
-    // Section 11.1 — "customer notified 'worker assigned'".
-    const assignedBooking = await prisma.booking.findUnique({
-      where: { id: dispatchLog.bookingId },
-      include: { customer: true, assignedWorker: { include: { user: true } } }
-    });
-    if (assignedBooking) {
-      await dispatchNotification({
-        userId: assignedBooking.customer.userId,
-        title: "Worker assigned",
-        body: `${assignedBooking.assignedWorker?.user.fullName ?? "A cooperative worker"} has been assigned to your booking.`,
-        dedupeKey: `booking:${dispatchLog.bookingId}:assigned`
-      });
-    }
-
-    // Auto-confirm after 60s unless the customer cancels first (Section
-    // 11.4's sweep is the durability backstop for this same transition).
-    setTimeout(async () => {
-      await transitionBookingStatus(dispatchLog.bookingId, "CONFIRMED").catch(() => {});
-    }, 60000);
-
+    await acceptDispatchOffer(dispatchLog.id, req.user!.id);
     return res.json({ outcome: "ACCEPTED" });
   } catch {
     return res.status(409).json({ outcome: "ALREADY_ASSIGNED" });

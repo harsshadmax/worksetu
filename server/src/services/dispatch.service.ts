@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { redis } from "../lib/redis-lock";
 import { scoreCandidateWorkers } from "./continuity-scoring.service";
 import { io } from "../lib/socket";
+import { dispatchNotification } from "./notification-dispatcher.service";
 import { transitionBookingStatus } from "./booking-state-machine.service";
 import { log } from "../lib/logger";
 
@@ -39,6 +40,112 @@ const MAX_SEARCH_RADIUS_KM = 15;
 async function getDispatchTimeouts(): Promise<{ top3: number; pool: number }> {
   const config = await prisma.platformConfig.findUnique({ where: { id: 1 } });
   return { top3: config?.top3TimeoutSeconds ?? 45, pool: config?.poolTimeoutSeconds ?? 120 };
+}
+
+// Section 11.1/11.2 — the accept transition itself, independent of who asked
+// for it. The HTTP handler calls this after its own auth and lock checks; the
+// demo timer below calls it on a seeded worker's behalf. Keeping one
+// implementation means demo bookings move through the real state machine and
+// produce the same rows, sockets and notifications as live ones.
+export async function acceptDispatchOffer(dispatchLogId: string, actorUserId: string): Promise<void> {
+  const dispatchLog = await prisma.dispatchLog.findUniqueOrThrow({ where: { id: dispatchLogId } });
+
+  await prisma.$transaction(async (tx) => {
+    const booking = await tx.booking.findUniqueOrThrow({ where: { id: dispatchLog.bookingId } });
+    if (booking.assignedWorkerId) {
+      throw new Error("ALREADY_ASSIGNED");
+    }
+    await tx.dispatchLog.update({
+      where: { id: dispatchLog.id },
+      data: { outcome: "ACCEPTED", respondedAt: new Date() }
+    });
+    await tx.booking.update({
+      where: { id: dispatchLog.bookingId },
+      data: { status: "ASSIGNED", assignedWorkerId: dispatchLog.workerId, lockExpiresAt: null }
+    });
+    await tx.workerProfile.update({
+      where: { id: dispatchLog.workerId },
+      data: { availabilityStatus: "ON_JOB", currentBookingId: dispatchLog.bookingId }
+    });
+    await tx.auditLog.create({
+      data: {
+        actorId: actorUserId,
+        action: "BOOKING_ACCEPTED",
+        entityType: "Booking",
+        entityId: dispatchLog.bookingId
+      }
+    });
+  });
+
+  await redis.publish(`dispatch-response:${dispatchLog.id}`, "ACCEPTED");
+  io.to(`booking:${dispatchLog.bookingId}`).emit("dispatch:update", {
+    bookingId: dispatchLog.bookingId,
+    phase: "ASSIGNED",
+    candidateStatus: { workerId: dispatchLog.workerId, offerStatus: "ACCEPTED" }
+  });
+
+  const assignedBooking = await prisma.booking.findUnique({
+    where: { id: dispatchLog.bookingId },
+    include: { customer: true, assignedWorker: { include: { user: true } } }
+  });
+  if (assignedBooking) {
+    await dispatchNotification({
+      userId: assignedBooking.customer.userId,
+      title: "Worker assigned",
+      body: `${assignedBooking.assignedWorker?.user.fullName ?? "A cooperative worker"} has been assigned to your booking.`,
+      dedupeKey: `booking:${dispatchLog.bookingId}:assigned`
+    });
+  }
+
+  // Auto-confirm after 60s unless the customer cancels first (Section 11.4's
+  // sweep is the durability backstop for this same transition).
+  setTimeout(() => {
+    transitionBookingStatus(dispatchLog.bookingId, "CONFIRMED").catch(() => {});
+  }, 60000);
+}
+
+// Demo mode only. Seeded workers have no one tapping "accept", so a dispatch
+// would always run its offers down to a timeout and cancel. With
+// DEMO_AUTO_ACCEPT_SECONDS set, the first offered candidate accepts after that
+// delay -- through acceptDispatchOffer above, so the booking, dispatch log,
+// worker status, notification and sockets are all the real ones. Unset in
+// production, this does nothing.
+const DEMO_AUTO_ACCEPT_SECONDS = Number(process.env.DEMO_AUTO_ACCEPT_SECONDS ?? 0);
+
+function scheduleDemoAutoAccept(dispatchLogId: string, workerProfileId: string): void {
+  if (!DEMO_AUTO_ACCEPT_SECONDS || DEMO_AUTO_ACCEPT_SECONDS <= 0) return;
+  setTimeout(async () => {
+    try {
+      const log = await prisma.dispatchLog.findUnique({ where: { id: dispatchLogId } });
+      if (!log || log.outcome !== "OFFERED") return; // a real response won the race
+      const worker = await prisma.workerProfile.findUnique({ where: { id: workerProfileId } });
+      if (!worker) return;
+      await acceptDispatchOffer(dispatchLogId, worker.userId);
+    } catch {
+      // A demo convenience must never take the dispatch engine down with it.
+    }
+  }, DEMO_AUTO_ACCEPT_SECONDS * 1000);
+}
+
+// Demo mode only. Candidate selection requires a location ping inside the
+// last 120 seconds (continuity-scoring.service.ts), which is right for live
+// use but means seeded workers fall out of every search two minutes after the
+// seed runs, so "finding a worker" could never succeed in a demo. This keeps
+// approved, available seeded workers marked as present. Unset in production,
+// nothing runs and presence stays earned by real pings.
+export function startDemoPresenceHeartbeat(): void {
+  if (!DEMO_AUTO_ACCEPT_SECONDS || DEMO_AUTO_ACCEPT_SECONDS <= 0) return;
+  const refresh = async () => {
+    await prisma.$executeRaw`
+      UPDATE worker_profiles
+      SET "lastLocationAt" = now()
+      WHERE "verificationStatus" = 'APPROVED'
+        AND "availabilityStatus" = 'AVAILABLE'
+        AND "currentLocation" IS NOT NULL
+    `.catch(() => undefined);
+  };
+  refresh();
+  setInterval(refresh, 60_000);
 }
 
 export async function enqueueDispatch(bookingId: string): Promise<void> {
@@ -105,6 +212,7 @@ async function runSequentialOfferQueue(
       phase: phaseLabel,
       offerExpiresInSeconds: timeoutSeconds
     });
+    scheduleDemoAutoAccept(dispatchLog.id, candidate.workerId);
     io.to(`booking:${bookingId}`).emit("dispatch:update", {
       bookingId,
       phase: phaseLabel,
@@ -153,6 +261,12 @@ async function runBroadcastOfferPool(
     phase: "POOL",
     candidates: pool.map((c) => ({ workerId: c.workerId, offerStatus: "WAITING" }))
   });
+
+  // Demo mode: the nearest pool candidate takes the job, same as the
+  // sequential path above.
+  if (dispatchLogs.length > 0) {
+    scheduleDemoAutoAccept(dispatchLogs[0].id, dispatchLogs[0].workerId);
+  }
 
   await new Promise<void>((resolve) => {
     const pollInterval = setInterval(
