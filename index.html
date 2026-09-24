@@ -616,39 +616,108 @@
         </div>
 
         <!-- Horizontal Navigation Links (Desktop) -->
-        <div class="hidden lg:flex items-center space-x-1 bg-custom-very-light-blue p-1.5 rounded-xl border border-custom-border flex-shrink min-w-0">
+        <div class="hidden lg:flex relative items-center space-x-1 bg-custom-very-light-blue p-1.5 rounded-xl border border-custom-border flex-shrink min-w-0"
+          @mouseleave="scheduleCloseNavCard()">
           <button
-            @click="setRole('landing')"
-            :class="currentRole === 'landing' ? 'bg-custom-card text-custom-primary shadow-sm font-bold' : 'text-custom-sec hover:text-custom-main font-semibold'"
-            :title="t('home')"
-            class="px-3 py-2 text-xs uppercase tracking-wider whitespace-nowrap transition-all duration-150 rounded-lg flex items-center space-x-2">
-            <i class="fa-solid fa-house text-[11px]"></i>
-            <span :class="currentActiveUser ? 'hidden 2xl:inline' : 'hidden xl:inline'">{{ t('home') }}</span>
+            @click="setRole('landing'); closeNavCard()"
+            @mouseenter="openNavCardFor('landing')"
+            @focus="openNavCardFor('landing')"
+            :class="currentRole === 'landing' ? 'bg-custom-card text-custom-primary shadow-sm font-bold ring-1 ring-custom-primary/30' : 'text-custom-sec hover:text-custom-main font-semibold'"
+            :title="t('home') + ' — ' + t('navHomeHint')"
+            :aria-label="t('home') + '. ' + t('navHomeHint')"
+            :aria-current="currentRole === 'landing' ? 'page' : null"
+            class="px-2.5 xl:px-3 py-2 text-[11px] xl:text-xs uppercase tracking-wider whitespace-nowrap transition-all duration-150 rounded-lg flex items-center gap-1.5 xl:gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-custom-primary focus-visible:ring-offset-1">
+            <i class="fa-solid fa-house text-[11px]" aria-hidden="true"></i>
+            <span>{{ t('home') }}</span>
           </button>
           <button
-            @click="setRole('customer')"
-            :class="currentRole === 'customer' ? 'bg-custom-card text-custom-primary shadow-sm font-bold' : 'text-custom-sec hover:text-custom-main font-semibold'"
-            :title="t('customer')"
-            class="px-3 py-2 text-xs uppercase tracking-wider whitespace-nowrap transition-all duration-150 rounded-lg flex items-center space-x-2">
-            <i class="fa-solid fa-user text-[11px]"></i>
-            <span :class="currentActiveUser ? 'hidden 2xl:inline' : 'hidden xl:inline'">{{ t('customer') }}</span>
+            @click="setRole('customer'); closeNavCard()"
+            @mouseenter="openNavCardFor('customer')"
+            @focus="openNavCardFor('customer')"
+            :class="currentRole === 'customer' ? 'bg-custom-card text-custom-primary shadow-sm font-bold ring-1 ring-custom-primary/30' : 'text-custom-sec hover:text-custom-main font-semibold'"
+            :title="t('customer') + ' — ' + t('navCustomerHint')"
+            :aria-label="t('customer') + '. ' + t('navCustomerHint')"
+            :aria-current="currentRole === 'customer' ? 'page' : null"
+            class="px-2.5 xl:px-3 py-2 text-[11px] xl:text-xs uppercase tracking-wider whitespace-nowrap transition-all duration-150 rounded-lg flex items-center gap-1.5 xl:gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-custom-primary focus-visible:ring-offset-1">
+            <i class="fa-solid fa-user text-[11px]" aria-hidden="true"></i>
+            <span>{{ t('customer') }}</span>
           </button>
           <button
-            @click="setRole('worker')"
-            :class="currentRole === 'worker' ? 'bg-custom-card text-custom-primary shadow-sm font-bold' : 'text-custom-sec hover:text-custom-main font-semibold'"
-            :title="t('worker')"
-            class="px-3 py-2 text-xs uppercase tracking-wider whitespace-nowrap transition-all duration-150 rounded-lg flex items-center space-x-2">
-            <i class="fa-solid fa-wrench text-[11px]"></i>
-            <span :class="currentActiveUser ? 'hidden 2xl:inline' : 'hidden xl:inline'">{{ t('worker') }}</span>
+            @click="setRole('worker'); closeNavCard()"
+            @mouseenter="openNavCardFor('worker')"
+            @focus="openNavCardFor('worker')"
+            :class="currentRole === 'worker' ? 'bg-custom-card text-custom-primary shadow-sm font-bold ring-1 ring-custom-primary/30' : 'text-custom-sec hover:text-custom-main font-semibold'"
+            :title="t('worker') + ' — ' + t('navWorkerHint')"
+            :aria-label="t('worker') + '. ' + t('navWorkerHint')"
+            :aria-current="currentRole === 'worker' ? 'page' : null"
+            class="px-2.5 xl:px-3 py-2 text-[11px] xl:text-xs uppercase tracking-wider whitespace-nowrap transition-all duration-150 rounded-lg flex items-center gap-1.5 xl:gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-custom-primary focus-visible:ring-offset-1">
+            <i class="fa-solid fa-wrench text-[11px]" aria-hidden="true"></i>
+            <span>{{ t('worker') }}</span>
           </button>
           <button
-            @click="setRole('admin')"
-            :class="currentRole === 'admin' ? 'bg-custom-card text-custom-primary shadow-sm font-bold' : 'text-custom-sec hover:text-custom-main font-semibold'"
-            :title="t('admin')"
-            class="px-3 py-2 text-xs uppercase tracking-wider whitespace-nowrap transition-all duration-150 rounded-lg flex items-center space-x-2">
-            <i class="fa-solid fa-shield-halved text-[11px]"></i>
-            <span :class="currentActiveUser ? 'hidden 2xl:inline' : 'hidden xl:inline'">{{ t('admin') }}</span>
+            @click="setRole('admin'); closeNavCard()"
+            @mouseenter="openNavCardFor('admin')"
+            @focus="openNavCardFor('admin')"
+            :class="currentRole === 'admin' ? 'bg-custom-card text-custom-primary shadow-sm font-bold ring-1 ring-custom-primary/30' : 'text-custom-sec hover:text-custom-main font-semibold'"
+            :title="t('admin') + ' — ' + t('navAdminHint')"
+            :aria-label="t('admin') + '. ' + t('navAdminHint')"
+            :aria-current="currentRole === 'admin' ? 'page' : null"
+            class="px-2.5 xl:px-3 py-2 text-[11px] xl:text-xs uppercase tracking-wider whitespace-nowrap transition-all duration-150 rounded-lg flex items-center gap-1.5 xl:gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-custom-primary focus-visible:ring-offset-1">
+            <i class="fa-solid fa-shield-halved text-[11px]" aria-hidden="true"></i>
+            <span>{{ t('admin') }}</span>
           </button>
+
+          <!-- Portal menu card: opens under the nav item it belongs to. -->
+          <div
+            v-if="openNavCard"
+            class="absolute left-1/2 -translate-x-1/2 top-[calc(100%+10px)] w-[min(92vw,420px)] bg-custom-card border border-custom-border rounded-2xl shadow-xl p-5 z-50 text-left"
+            role="dialog"
+            :aria-label="navCard.title"
+            @mouseenter="holdNavCard()"
+            @mouseleave="scheduleCloseNavCard()">
+            <div class="flex items-start gap-3 pb-3 border-b border-custom-border">
+              <span class="w-10 h-10 rounded-xl bg-custom-very-light-blue text-custom-primary flex items-center justify-center flex-shrink-0">
+                <i class="fa-solid" :class="navCard.icon" aria-hidden="true"></i>
+              </span>
+              <div class="min-w-0">
+                <h3 class="text-sm font-extrabold uppercase-track text-custom-main">{{ navCard.title }}</h3>
+                <p class="text-[11px] text-custom-sec font-medium mt-0.5">{{ navCard.description }}</p>
+              </div>
+              <button
+                type="button"
+                @click="closeNavCard()"
+                class="ml-auto w-7 h-7 rounded-lg text-custom-sec hover:text-custom-main hover:bg-custom-very-light-blue transition flex items-center justify-center flex-shrink-0"
+                :aria-label="t('close')">
+                <i class="fa-solid fa-xmark text-xs" aria-hidden="true"></i>
+              </button>
+            </div>
+
+            <ul class="py-2">
+              <li v-for="item in navCard.items" :key="item.key">
+                <button
+                  type="button"
+                  @click="runNavCardItem(item)"
+                  class="w-full text-left px-3 py-2.5 rounded-xl hover:bg-custom-very-light-blue transition focus:outline-none focus-visible:ring-2 focus-visible:ring-custom-primary">
+                  <span class="block text-xs font-bold text-custom-main">{{ item.label }}</span>
+                  <span class="block text-[11px] text-custom-sec font-medium mt-0.5">{{ item.hint }}</span>
+                </button>
+              </li>
+            </ul>
+
+            <div class="pt-3 border-t border-custom-border space-y-2">
+              <button
+                type="button"
+                @click="runNavCardCta()"
+                class="w-full min-h-[44px] px-4 rounded-xl bg-custom-primary hover:bg-custom-dark text-white text-xs font-bold uppercase-track shadow-sm transition flex items-center justify-center gap-2">
+                <i class="fa-solid" :class="navCard.ctaIcon" aria-hidden="true"></i>
+                <span>{{ navCard.cta }}</span>
+              </button>
+              <p class="text-center text-[11px] text-custom-sec">
+                {{ navCard.secondaryLabel }}
+                <button type="button" @click="runNavCardSecondary()" class="text-custom-primary font-bold hover:underline">{{ navCard.secondaryCta }}</button>
+              </p>
+            </div>
+          </div>
         </div>
 
         <!-- Right Side Nav Actions -->
@@ -811,11 +880,41 @@
       </div>
 
       <!-- Mobile Role quick switcher bar -->
-      <div class="lg:hidden flex items-center justify-around border-t border-custom-border bg-custom-card px-2 py-2 text-xs font-bold uppercase tracking-wider">
-        <button @click="setRole('landing')" :class="currentRole === 'landing' ? 'text-custom-primary bg-custom-light-blue' : 'text-custom-sec'" class="px-3 py-1.5 rounded-lg transition">{{ t('home') }}</button>
-        <button @click="setRole('customer')" :class="currentRole === 'customer' ? 'text-custom-primary bg-custom-light-blue' : 'text-custom-sec'" class="px-3 py-1.5 rounded-lg transition">{{ t('customer') }}</button>
-        <button @click="setRole('worker')" :class="currentRole === 'worker' ? 'text-custom-primary bg-custom-light-blue' : 'text-custom-sec'" class="px-3 py-1.5 rounded-lg transition">{{ t('worker') }}</button>
-        <button @click="setRole('admin')" :class="currentRole === 'admin' ? 'text-custom-primary bg-custom-light-blue' : 'text-custom-sec'" class="px-3 py-1.5 rounded-lg transition">{{ t('admin') }}</button>
+      <div class="lg:hidden border-t border-custom-border bg-custom-card px-2 py-2">
+        <div class="flex items-center gap-1 overflow-x-auto bg-custom-very-light-blue p-1 rounded-xl border border-custom-border">
+          <button
+            @click="setRole('landing')"
+            :class="currentRole === 'landing' ? 'bg-custom-card text-custom-primary shadow-sm font-bold ring-1 ring-custom-primary/30' : 'text-custom-sec font-semibold'"
+            :aria-label="t('home') + '. ' + t('navHomeHint')"
+            :aria-current="currentRole === 'landing' ? 'page' : null"
+            class="flex-1 px-2.5 py-2 rounded-lg text-[10px] uppercase tracking-wider whitespace-nowrap transition flex items-center justify-center gap-1.5">
+            <i class="fa-solid fa-house text-[10px]" aria-hidden="true"></i><span>{{ t('home') }}</span>
+          </button>
+          <button
+            @click="setRole('customer')"
+            :class="currentRole === 'customer' ? 'bg-custom-card text-custom-primary shadow-sm font-bold ring-1 ring-custom-primary/30' : 'text-custom-sec font-semibold'"
+            :aria-label="t('customer') + '. ' + t('navCustomerHint')"
+            :aria-current="currentRole === 'customer' ? 'page' : null"
+            class="flex-1 px-2.5 py-2 rounded-lg text-[10px] uppercase tracking-wider whitespace-nowrap transition flex items-center justify-center gap-1.5">
+            <i class="fa-solid fa-user text-[10px]" aria-hidden="true"></i><span>{{ t('customer') }}</span>
+          </button>
+          <button
+            @click="setRole('worker')"
+            :class="currentRole === 'worker' ? 'bg-custom-card text-custom-primary shadow-sm font-bold ring-1 ring-custom-primary/30' : 'text-custom-sec font-semibold'"
+            :aria-label="t('worker') + '. ' + t('navWorkerHint')"
+            :aria-current="currentRole === 'worker' ? 'page' : null"
+            class="flex-1 px-2.5 py-2 rounded-lg text-[10px] uppercase tracking-wider whitespace-nowrap transition flex items-center justify-center gap-1.5">
+            <i class="fa-solid fa-wrench text-[10px]" aria-hidden="true"></i><span>{{ t('worker') }}</span>
+          </button>
+          <button
+            @click="setRole('admin')"
+            :class="currentRole === 'admin' ? 'bg-custom-card text-custom-primary shadow-sm font-bold ring-1 ring-custom-primary/30' : 'text-custom-sec font-semibold'"
+            :aria-label="t('admin') + '. ' + t('navAdminHint')"
+            :aria-current="currentRole === 'admin' ? 'page' : null"
+            class="flex-1 px-2.5 py-2 rounded-lg text-[10px] uppercase tracking-wider whitespace-nowrap transition flex items-center justify-center gap-1.5">
+            <i class="fa-solid fa-shield-halved text-[10px]" aria-hidden="true"></i><span>{{ t('admin') }}</span>
+          </button>
+        </div>
       </div>
     </header>
 
@@ -1120,12 +1219,22 @@
                     <i v-if="authBusy" class="fa-solid fa-spinner fa-spin mr-1.5"></i>{{ t('loginButton') }}
                   </button>
 
+                  <!-- Creating an account is a customer action, so it sits with
+                       the customer sign-in rather than in the demo section. -->
+                  <button
+                    type="button"
+                    @click="currentView = 'register'"
+                    class="w-full min-h-[46px] px-4 rounded-xl border border-custom-primary/40 bg-custom-very-light-blue text-custom-primary text-xs font-bold uppercase-track hover:border-custom-primary hover:bg-custom-light-blue transition flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-custom-primary">
+                    <i class="fa-solid fa-user-plus text-[11px]" aria-hidden="true"></i>
+                    <span>{{ t('createAccountCta') }}</span>
+                  </button>
+
                   <!-- Demo login: one click signs in as that role's seeded account -->
                   <div class="pt-5 border-t border-custom-border/60">
                     <p class="text-[10px] font-extrabold uppercase-track text-custom-sec mb-3">{{ t('demoLoginLabel') }}</p>
                     <div class="space-y-2">
                       <button
-                        v-for="d in demoAccounts" :key="d.role"
+                        v-for="d in demoAccountsForRole" :key="d.role"
                         type="button"
                         @click="demoLogin(d.role)"
                         :disabled="authBusy"
@@ -1136,22 +1245,7 @@
                       </button>
                     </div>
                   </div>
-                  <div class="pt-5 border-t border-custom-border/60">
-                    <button
-                      type="button"
-                      @click="demoLogin('admin', true)"
-                      :disabled="authBusy"
-                      class="w-full py-3.5 bg-custom-primary hover:bg-custom-dark text-white text-xs font-bold uppercase-track rounded-xl shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-wait">
-                      <i v-if="authBusy && demoBusyRole === 'dashboard'" class="fa-solid fa-circle-notch fa-spin text-[11px]"></i>
-                      <span>{{ authBusy && demoBusyRole === 'dashboard' ? t('loadingLabel') : t('viewDemoDashboard') }}</span>
-                    </button>
-                    <p class="text-center text-[11px] text-custom-sec mt-2">{{ t('viewDemoDashboardHint') }}</p>
-                  </div>
 
-                  <p class="text-center text-xs text-custom-sec mt-6">
-                    {{ t('noAccount') }}
-                    <a @click="currentView = 'register'" class="text-custom-primary font-bold cursor-pointer hover:underline">{{ t('registerLink') }}</a>
-                  </p>
                 </form>
               </div>
             </div>
@@ -1838,10 +1932,21 @@
               </div>
 
               <div v-if="dispatchCandidates.candidates.length === 0" class="bg-custom-card border border-custom-border p-8 rounded-3xl shadow-sm text-center space-y-4">
-                <div class="w-14 h-14 mx-auto rounded-2xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 flex items-center justify-center text-custom-primary text-xl">
-                  <i class="fa-solid fa-satellite-dish animate-pulse"></i>
+                <div class="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center text-xl"
+                  :class="noWorkersAvailable ? 'bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400' : 'bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-custom-primary'">
+                  <i class="fa-solid" :class="noWorkersAvailable ? 'fa-user-slash' : 'fa-satellite-dish animate-pulse'"></i>
                 </div>
-                <p class="text-xs text-custom-sec font-medium max-w-md mx-auto">{{ t('findingWorkersDesc') }}</p>
+                <p v-if="!noWorkersAvailable" class="text-xs text-custom-sec font-medium max-w-md mx-auto">{{ t('findingWorkersDesc') }}</p>
+                <template v-else>
+                  <h4 class="text-sm font-extrabold text-custom-main uppercase-track">{{ t('noWorkersTitle') }}</h4>
+                  <p class="text-xs text-custom-sec font-medium max-w-md mx-auto">{{ t('noWorkersDesc') }}</p>
+                  <button
+                    type="button"
+                    @click="cancelBooking(activeBooking.id)"
+                    class="px-5 py-2.5 rounded-xl border border-custom-border text-custom-main text-xs font-bold uppercase-track hover:border-custom-primary hover:text-custom-primary transition">
+                    {{ t('cancelRequest') }}
+                  </button>
+                </template>
               </div>
 
               <div v-else class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1904,8 +2009,9 @@
                   <i class="fa-solid fa-circle-check"></i>
                 </div>
                 <div>
-                  <h2 class="text-xl font-extrabold text-custom-main uppercase tracking-tight">{{ t('bookingConfirmedTitle') }}</h2>
-                  <p class="text-xs text-custom-sec font-medium mt-1">{{ t('bookingConfirmedDesc') }}</p>
+                  <h2 class="text-xl font-extrabold text-custom-main uppercase tracking-tight">{{ t('trackBookingTitle') }}</h2>
+                  <p class="text-[11px] font-mono text-custom-sec mt-1">{{ bookingReference(activeBooking.id) }}</p>
+                  <p class="text-xs text-custom-sec font-medium mt-0.5">{{ t('bookingConfirmedDesc') }}</p>
                 </div>
               </div>
 
@@ -1934,8 +2040,120 @@
               </button>
             </div>
 
-            <!-- Service Status Progress Tracker: only stages that have actually happened -->
-            <div class="bg-custom-card border border-custom-border p-6 md:p-8 rounded-2xl shadow-sm">
+            <!-- Live tracking: the desktop counterpart of the mobile
+                 "Track Booking" screen. Route, distance and ETA come from the
+                 booking payload plus the existing worker:location socket
+                 feed; nothing here polls on its own. -->
+            <div v-if="activeBooking.worker || trackingStepIndex >= 0" class="bg-custom-card border border-custom-border rounded-2xl shadow-sm overflow-hidden">
+              <div class="flex items-center justify-between px-6 md:px-8 pt-6 pb-4 border-b border-custom-border">
+                <span class="text-xs uppercase-track font-black text-custom-primary">{{ t('trackingSectionTitle') }}</span>
+                <span v-if="!trackingCancelled && trackingStepIndex < 4 && trackingHasLocation && !trackingIsStale"
+                  class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase-track bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900/50">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>{{ t('trackLiveLabel') }}
+                </span>
+                <span v-else class="text-[10px] font-bold uppercase-track text-custom-sec">{{ trackingLastUpdatedLabel }}</span>
+              </div>
+
+              <!-- Route view. A drawn schematic, not a mapping provider: the
+                   prototype has coordinates but no map key, and a fake street
+                   map would imply precision the data does not have. -->
+              <div class="relative overflow-hidden bg-custom-very-light-blue border-b border-custom-border" style="height: 230px;" role="img"
+                :aria-label="trackingEtaLabel + '. ' + trackingLastUpdatedLabel">
+                <svg viewBox="0 0 600 210" preserveAspectRatio="none" class="absolute inset-0 w-full h-full">
+                  <path d="M60 165 C 170 150, 230 95, 330 92 S 480 62, 545 48" fill="none" stroke="currentColor"
+                    class="text-custom-primary" stroke-width="4" stroke-dasharray="10 9" stroke-linecap="round" opacity="0.45"></path>
+                </svg>
+                <!-- Customer pin: fixed at the destination end of the route. -->
+                <div class="absolute flex flex-col items-center" style="left: 88%; top: 10%;">
+                  <span class="w-9 h-9 rounded-xl bg-custom-primary text-white flex items-center justify-center shadow-md">
+                    <i class="fa-solid fa-house text-xs"></i>
+                  </span>
+                  <span class="mt-1 text-[9px] font-black uppercase-track text-custom-sec">{{ t('trackYourAddress') }}</span>
+                </div>
+                <!-- Worker pin: travels the route as reported distance shrinks. -->
+                <div v-if="activeBooking.worker" class="absolute transition-all duration-700 ease-out flex flex-col items-center"
+                  :style="{ left: (10 + trackingProgress * 76) + '%', top: (62 - trackingProgress * 50) + '%' }">
+                  <span class="w-10 h-10 rounded-full border-2 border-custom-card shadow-md flex items-center justify-center text-white"
+                    :class="trackingIsStale ? 'bg-slate-400' : 'bg-emerald-500'">
+                    <i class="fa-solid fa-user text-xs"></i>
+                  </span>
+                  <span class="mt-1 px-2 py-0.5 rounded-lg bg-custom-card border border-custom-border text-[9px] font-black uppercase-track text-custom-main shadow-xs whitespace-nowrap">
+                    {{ activeBooking.worker.name.split(' ')[0] }}
+                  </span>
+                </div>
+                <!-- Headline chip: ETA while travelling, plain state otherwise. -->
+                <div class="absolute right-4 bottom-4 px-3.5 py-2 rounded-xl bg-custom-card border border-custom-border shadow-sm">
+                  <div class="text-xs font-extrabold text-custom-main">{{ trackingEtaLabel }}</div>
+                  <div v-if="trackingDistanceKm !== null && trackingStepIndex < 3" class="text-[10px] text-custom-sec font-semibold mt-0.5">
+                    {{ t('trackDistanceAway', { km: trackingDistanceKm }) }}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Step list. The active step is derived from booking status,
+                   and later steps stay visible so "what happens next" is
+                   answered without opening anything. -->
+              <ol class="px-6 md:px-8 py-6 space-y-4">
+                <li v-for="(step, idx) in trackingSteps" :key="step.key" class="flex items-start gap-3.5">
+                  <div class="flex flex-col items-center flex-shrink-0">
+                    <span class="w-8 h-8 rounded-full flex items-center justify-center text-[11px] border"
+                      :class="step.state === 'done' ? 'bg-emerald-500 border-emerald-500 text-white' : (step.state === 'current' ? 'bg-custom-primary border-custom-primary text-white ring-4 ring-custom-primary/20' : 'bg-custom-bg border-custom-border text-custom-sec')">
+                      <i class="fa-solid" :class="step.state === 'done' ? 'fa-check' : step.icon"></i>
+                    </span>
+                    <span v-if="idx < trackingSteps.length - 1" class="w-[2px] h-6 mt-1"
+                      :class="step.state === 'done' ? 'bg-emerald-500' : 'bg-custom-border'"></span>
+                  </div>
+                  <div class="min-w-0 pt-1">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <h4 class="text-xs font-extrabold uppercase-track"
+                        :class="step.state === 'upcoming' ? 'text-custom-sec' : 'text-custom-main'">{{ step.label }}</h4>
+                      <span v-if="step.state === 'current' && !trackingCancelled"
+                        class="px-2 py-0.5 rounded-full text-[9px] font-black uppercase-track bg-custom-very-light-blue text-custom-primary border border-custom-primary/40">{{ t('trackLiveLabel') }}</span>
+                      <span v-else-if="step.state === 'upcoming'"
+                        class="px-2 py-0.5 rounded-full text-[9px] font-black uppercase-track bg-custom-bg text-custom-sec border border-custom-border">{{ t('trackNextLabel') }}</span>
+                    </div>
+                    <p class="text-[11px] text-custom-sec font-medium mt-0.5">{{ step.description }}</p>
+                    <p v-if="step.at" class="text-[10px] text-custom-sec font-semibold mt-0.5 font-mono">{{ formatDate(step.at) }}</p>
+                  </div>
+                </li>
+              </ol>
+
+              <!-- Start code: read out to the worker when the job begins.
+                   Demo aid; the backend does not verify it. -->
+              <div v-if="trackingStartCode && trackingStepIndex >= 1 && trackingStepIndex < 4"
+                class="mx-6 md:mx-8 mb-5 p-4 rounded-xl border border-custom-border bg-custom-very-light-blue flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <h4 class="text-xs font-extrabold uppercase-track text-custom-main">{{ t('startOtpTitle') }}</h4>
+                  <p class="text-[11px] text-custom-sec font-medium mt-0.5">{{ t('startOtpHint') }}</p>
+                </div>
+                <div class="flex gap-2" role="group" :aria-label="t('startOtpTitle')">
+                  <span v-for="(digit, i) in trackingStartCode" :key="i"
+                    class="w-10 h-11 rounded-lg bg-custom-card border border-custom-border flex items-center justify-center text-base font-extrabold font-mono text-custom-main shadow-xs">{{ digit }}</span>
+                </div>
+              </div>
+
+              <!-- Demo control: advances the real booking one step through the
+                   same state machine the worker app drives. -->
+              <div v-if="activeBooking.demoMode && !trackingCancelled && trackingStepIndex >= 0" class="mx-6 md:mx-8 mb-6">
+                <button
+                  type="button"
+                  @click="simulateNextUpdate"
+                  :disabled="simulateBusy"
+                  class="w-full min-h-[52px] px-5 rounded-xl bg-custom-primary hover:bg-custom-dark disabled:opacity-60 disabled:cursor-wait text-white text-xs font-bold uppercase-track shadow-md transition flex items-center justify-center gap-2">
+                  <i class="fa-solid" :class="simulateBusy ? 'fa-circle-notch fa-spin' : 'fa-bolt'" aria-hidden="true"></i>
+                  <span>{{ t('simulateNextUpdate') }}</span>
+                </button>
+                <p class="text-center text-[11px] text-custom-sec mt-2">{{ t('simulateNextUpdateHint') }}</p>
+              </div>
+
+              <div v-if="trackingCancelled" class="mx-6 md:mx-8 mb-6 p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-xs font-bold text-red-600 dark:text-red-400">
+                {{ t('trackCancelledLabel') }}
+              </div>
+            </div>
+
+            <!-- Service Status Progress Tracker: only stages that have actually happened.
+                 Hidden while the live tracking panel is showing the same history. -->
+            <div v-if="!activeBooking.worker && trackingStepIndex < 0" class="bg-custom-card border border-custom-border p-6 md:p-8 rounded-2xl shadow-sm">
               <div class="flex items-center justify-between mb-6 pb-3 border-b border-custom-border">
                 <span class="text-xs uppercase-track font-black text-custom-primary block">01 &mdash; {{ t('serviceStatusTitle') }}</span>
                 <span class="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase-track bg-custom-very-light-blue text-custom-primary border border-custom-primary">
@@ -1980,6 +2198,10 @@
                       <div class="min-w-0">
                         <h3 class="text-base font-extrabold text-custom-main uppercase tracking-wide truncate">{{ activeBooking.worker.name }}</h3>
                         <p v-if="activeBookingSummary" class="text-[11px] text-custom-sec font-bold uppercase-track mt-0.5">{{ getServiceName(activeBookingSummary.serviceCategoryId) }}</p>
+                        <p v-if="activeBooking.worker && activeBooking.worker.cooperative" class="text-[11px] text-custom-sec font-medium truncate">{{ activeBooking.worker.cooperative }}</p>
+                        <p v-if="activeBooking.worker && activeBooking.worker.ratingCount" class="text-[11px] font-bold text-amber-600 dark:text-amber-400 mt-0.5">
+                          <i class="fa-solid fa-star text-[9px]"></i> {{ activeBooking.worker.rating }} ({{ activeBooking.worker.ratingCount }})
+                        </p>
                       </div>
                     </div>
 
@@ -2316,7 +2538,7 @@
                     <p class="text-[10px] font-extrabold uppercase-track text-custom-sec mb-3">{{ t('demoLoginLabel') }}</p>
                     <div class="space-y-2">
                       <button
-                        v-for="d in demoAccounts" :key="d.role"
+                        v-for="d in demoAccountsForRole" :key="d.role"
                         type="button"
                         @click="demoLogin(d.role)"
                         :disabled="authBusy"
@@ -2327,22 +2549,7 @@
                       </button>
                     </div>
                   </div>
-                  <div class="pt-5 border-t border-custom-border/60">
-                    <button
-                      type="button"
-                      @click="demoLogin('admin', true)"
-                      :disabled="authBusy"
-                      class="w-full py-3.5 bg-custom-primary hover:bg-custom-dark text-white text-xs font-bold uppercase-track rounded-xl shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-wait">
-                      <i v-if="authBusy && demoBusyRole === 'dashboard'" class="fa-solid fa-circle-notch fa-spin text-[11px]"></i>
-                      <span>{{ authBusy && demoBusyRole === 'dashboard' ? t('loadingLabel') : t('viewDemoDashboard') }}</span>
-                    </button>
-                    <p class="text-center text-[11px] text-custom-sec mt-2">{{ t('viewDemoDashboardHint') }}</p>
-                  </div>
 
-                  <p class="text-center text-xs text-custom-sec mt-6">
-                    {{ t('noAccount') }}
-                    <a @click="currentView = 'register'" class="text-custom-primary font-bold cursor-pointer hover:underline">{{ t('registerLink') }}</a>
-                  </p>
                 </form>
               </div>
             </div>
@@ -3529,7 +3736,7 @@
                     <p class="text-[10px] font-extrabold uppercase-track text-custom-sec mb-3">{{ t('demoLoginLabel') }}</p>
                     <div class="space-y-2">
                       <button
-                        v-for="d in demoAccounts" :key="d.role"
+                        v-for="d in demoAccountsForRole" :key="d.role"
                         type="button"
                         @click="demoLogin(d.role)"
                         :disabled="authBusy"

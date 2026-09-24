@@ -70,6 +70,18 @@ const app = createApp({
     const activeBookingId = ref(localStorage.getItem(ACTIVE_BOOKING_KEY) || localStorage.getItem("activeBookingId_sih2026") || null);
     const activeBooking = ref(null); // full detail (GET /bookings/:id)
     const dispatchCandidates = ref({ phase: null, candidates: [] });
+
+    // ----------------------------------------------------
+    // Live tracking of the assigned worker. This is a second reader of the
+    // existing feeds -- GET /bookings/:id for the booking and the
+    // worker:location socket event the live-operations map already uses --
+    // not a second tracking system: no extra endpoint, socket or poll loop.
+    // ----------------------------------------------------
+    const trackedWorkerPoint = ref(null); // { lat, lng, at } from the socket
+    const trackStartDistanceKm = ref(null); // first distance seen, for progress
+    const trackingClock = ref(Date.now()); // ticks so "updated 2m ago" stays true
+    let trackingTicker = null;
+    const TRAVEL_SPEED_KMH = 18; // city travel, used only for the ETA estimate
     const notifications = ref([]);
     const unreadNotificationCount = computed(() => notifications.value.filter((n) => !n.isRead).length);
 
@@ -212,6 +224,14 @@ const app = createApp({
       return { en: "en-IN", hi: "hi-IN", ta: "ta-IN", bn: "bn-IN" }[language.value] || "en-IN";
     }
 
+    function haversineKm(lat1, lng1, lat2, lng2) {
+      const toRad = (deg) => (deg * Math.PI) / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+      return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
     function apiErrorMessage(err) {
       if (err instanceof api.ApiError) {
         if (err.status >= 500) return t("serverErrorMessage");
@@ -276,6 +296,11 @@ const app = createApp({
         if (currentRole.value === "admin") {
           const idx = adminLiveWorkers.value.findIndex((w) => w.workerId === payload.workerId);
           if (idx !== -1) adminLiveWorkers.value[idx] = { ...adminLiveWorkers.value[idx], ...payload };
+        }
+        // The customer watching this booking gets the same ping, so the
+        // tracking panel moves without refetching the booking.
+        if (activeBooking.value?.worker && payload.workerId === activeBooking.value.worker.id) {
+          trackedWorkerPoint.value = { lat: payload.lat, lng: payload.lng, at: Date.now() };
         }
       });
     }
@@ -434,6 +459,13 @@ const app = createApp({
       { role: "admin", label: "Cooperative Admin", tag: "ADMIN", email: "registrar@worksetu.coop", password: "AdminPass@123" },
     ];
     const demoBusyRole = ref(null);
+    // Each portal offers only its own demo account: a worker sign-in form
+    // offering a customer login sends people to the wrong dashboard.
+    const demoAccountsForRole = computed(() => {
+      const role = currentRole.value;
+      const match = demoAccounts.filter((a) => a.role === role);
+      return match.length ? match : demoAccounts;
+    });
     const demoLogin = async (role, viaDashboard = false) => {
       if (authBusy.value) return;
       const acct = demoAccounts.find((a) => a.role === role);
@@ -604,7 +636,19 @@ const app = createApp({
 
     async function refreshActiveBooking() {
       if (!activeBookingId.value) return;
+      const previousStatus = activeBooking.value?.status;
       activeBooking.value = await api.request("GET", `/bookings/${activeBookingId.value}`).catch(() => activeBooking.value);
+      const status = activeBooking.value?.status;
+      // Leaving the search the moment a worker takes the job is the whole
+      // point of the search screen; waiting for the customer to notice is not.
+      if (
+        currentView.value === "matching" &&
+        previousStatus !== status &&
+        ["ASSIGNED", "CONFIRMED", "IN_PROGRESS"].includes(status)
+      ) {
+        navigateTo("bookingConfirmed");
+        showToast(t("workerFoundToast"), activeBooking.value?.worker?.name ?? "", "success");
+      }
       if (activeBooking.value && ["DISPATCHING_TOP3", "DISPATCHING_POOL"].includes(activeBooking.value.status)) {
         dispatchCandidates.value = await api
           .request("GET", `/dispatch/${activeBookingId.value}/candidates`)
@@ -627,6 +671,310 @@ const app = createApp({
       const res = await api.request("GET", "/customers/me/bookings").catch(() => null);
       if (res) customerBookings.value = res.items;
     }
+
+    // Mirrors the mobile app's five tracking steps. The desktop booking can
+    // sit in more states than that (two dispatch phases, settled, cancelled),
+    // so several of them collapse onto one step.
+    const TRACK_STEPS = [
+      { key: "REQUESTED", statuses: ["REQUESTED", "DISPATCHING_TOP3", "DISPATCHING_POOL"], icon: "fa-paper-plane" },
+      { key: "ASSIGNED", statuses: ["ASSIGNED"], icon: "fa-user-check" },
+      { key: "ON_THE_WAY", statuses: ["CONFIRMED"], icon: "fa-route" },
+      { key: "IN_PROGRESS", statuses: ["IN_PROGRESS"], icon: "fa-screwdriver-wrench" },
+      { key: "COMPLETED", statuses: ["COMPLETED", "SETTLED"], icon: "fa-circle-check" }
+    ];
+    const TIMELINE_STAGE_FOR_STEP = {
+      REQUESTED: "REQUESTED",
+      ASSIGNED: "ASSIGNED",
+      ON_THE_WAY: "CONFIRMED",
+      IN_PROGRESS: "IN_PROGRESS",
+      COMPLETED: "COMPLETED"
+    };
+
+    const trackingStepIndex = computed(() => {
+      const status = activeBooking.value?.status;
+      if (!status) return -1;
+      const idx = TRACK_STEPS.findIndex((s) => s.statuses.includes(status));
+      return idx;
+    });
+
+    // Every step is listed, not only the ones that already happened, so the
+    // customer can see what comes next -- the point of a tracking screen.
+    const trackingSteps = computed(() => {
+      const booking = activeBooking.value;
+      if (!booking) return [];
+      const current = trackingStepIndex.value;
+      const stamps = Object.fromEntries((booking.timeline || []).map((t) => [t.stage, t.at]));
+      return TRACK_STEPS.map((step, idx) => ({
+        key: step.key,
+        icon: step.icon,
+        label: t(`trackStep${step.key}`),
+        description: t(`trackStep${step.key}Desc`),
+        at: stamps[TIMELINE_STAGE_FOR_STEP[step.key]] || null,
+        state: current < 0 ? "upcoming" : idx < current ? "done" : idx === current ? "current" : "upcoming"
+      }));
+    });
+
+    // Short human-readable booking reference, e.g. WS-24821, from the uuid.
+    const bookingReference = (id) => {
+      if (!id) return "";
+      let hash = 0;
+      for (const ch of id) hash = (hash * 33 + ch.charCodeAt(0)) % 100000;
+      return `WS-${String(hash).padStart(5, "0")}`;
+    };
+
+    const trackingStartCode = computed(() => {
+      const id = activeBooking.value?.id;
+      if (!id) return null;
+      let hash = 0;
+      for (const ch of id) hash = (hash * 31 + ch.charCodeAt(0)) % 10000;
+      return String(hash).padStart(4, "0").split("");
+    });
+
+    const trackingCancelled = computed(() => activeBooking.value?.status === "CANCELLED");
+
+    // Distance: the live socket point when one has arrived, otherwise the
+    // figure the booking payload already carried.
+    const trackingDistanceKm = computed(() => {
+      const booking = activeBooking.value;
+      if (!booking?.worker) return null;
+      const point = trackedWorkerPoint.value;
+      if (point && booking.customerLocation) {
+        return Math.round(haversineKm(point.lat, point.lng, booking.customerLocation.lat, booking.customerLocation.lng) * 10) / 10;
+      }
+      return booking.worker.distanceKm ?? null;
+    });
+
+    const trackingLocationAt = computed(() => {
+      const point = trackedWorkerPoint.value;
+      if (point) return point.at;
+      const reported = activeBooking.value?.worker?.lastLocationAt;
+      return reported ? new Date(reported).getTime() : null;
+    });
+
+    const trackingHasLocation = computed(() => trackingDistanceKm.value !== null && trackingLocationAt.value !== null);
+
+    // A ping older than this is history, not live movement, so the panel says
+    // when it was last heard from instead of animating a stale position.
+    const TRACKING_STALE_MS = 3 * 60 * 1000;
+    const trackingIsStale = computed(() => {
+      const at = trackingLocationAt.value;
+      if (!at) return true;
+      return trackingClock.value - at > TRACKING_STALE_MS;
+    });
+
+    const trackingLastUpdatedLabel = computed(() => {
+      const at = trackingLocationAt.value;
+      if (!at) return t("trackLocationUnavailable");
+      const mins = Math.max(0, Math.round((trackingClock.value - at) / 60000));
+      if (mins < 1) return t("trackUpdatedJustNow");
+      return t("trackUpdatedMinsAgo", { mins });
+    });
+
+    const trackingEtaMinutes = computed(() => {
+      const km = trackingDistanceKm.value;
+      if (km === null || trackingStepIndex.value < 1 || trackingStepIndex.value > 2) return null;
+      return Math.max(1, Math.min(90, Math.round((km / TRAVEL_SPEED_KMH) * 60)));
+    });
+
+    // Headline on the map card: an ETA while travelling, plain state otherwise.
+    const trackingEtaLabel = computed(() => {
+      const step = trackingStepIndex.value;
+      if (trackingCancelled.value) return t("trackCancelledLabel");
+      if (step >= 4) return t("trackCompletedLabel");
+      if (step === 3) return t("trackAtYourAddress");
+      if (!trackingHasLocation.value) return t("trackLocationUnavailable");
+      if (trackingIsStale.value) return t("trackLocationStale");
+      const eta = trackingEtaMinutes.value;
+      return eta === null ? t("trackPreparing") : t("trackEtaMins", { mins: eta });
+    });
+
+    // Fraction of the journey covered, from the largest distance seen on this
+    // booking. Movement follows the pings, so the marker never jumps back.
+    const trackingProgress = computed(() => {
+      const step = trackingStepIndex.value;
+      if (step >= 3) return 1;
+      const km = trackingDistanceKm.value;
+      const start = trackStartDistanceKm.value;
+      if (km === null || !start || start <= 0) return step >= 1 ? 0.25 : 0;
+      return Math.max(0, Math.min(1, 1 - km / start));
+    });
+
+    watch(trackingDistanceKm, (km) => {
+      if (km === null) return;
+      if (trackStartDistanceKm.value === null || km > trackStartDistanceKm.value) trackStartDistanceKm.value = km;
+    });
+
+    // Reset the journey baseline when a different booking is opened.
+    watch(activeBookingId, () => {
+      trackedWorkerPoint.value = null;
+      trackStartDistanceKm.value = null;
+    });
+
+    // One 30s ticker, only while the tracking screen is open, cleared on the
+    // way out -- the "last updated" text is the only thing that needs it.
+    watch([currentView, currentRole], ([view, role]) => {
+      const wantsTicker = role === "customer" && view === "bookingConfirmed";
+      if (wantsTicker && !trackingTicker) {
+        trackingClock.value = Date.now();
+        trackingTicker = setInterval(() => (trackingClock.value = Date.now()), 30000);
+      } else if (!wantsTicker && trackingTicker) {
+        clearInterval(trackingTicker);
+        trackingTicker = null;
+      }
+    });
+
+    const simulateBusy = ref(false);
+    const simulateNextUpdate = async () => {
+      if (simulateBusy.value || !activeBookingId.value) return;
+      simulateBusy.value = true;
+      try {
+        const res = await api.request("POST", `/bookings/${activeBookingId.value}/demo-advance`);
+        if (!res?.advanced) {
+          showToast(t("trackAlreadyCompleted"), "", "info");
+        }
+        await refreshActiveBooking();
+      } catch (err) {
+        showToast(t("actionFailedToast"), apiErrorMessage(err), "error", 5000);
+      } finally {
+        simulateBusy.value = false;
+      }
+    };
+
+    // ----------------------------------------------------
+    // Portal menu cards. One definition per portal: what it is, what you can
+    // do there, and how to join. Every action routes into an existing view --
+    // no second navigation or auth system.
+    // ----------------------------------------------------
+    const openNavCard = ref(null);
+    let navCardTimer = null;
+
+    const NAV_CARDS = {
+      landing: {
+        icon: "fa-house",
+        titleKey: "home",
+        descKey: "navHomeHint",
+        ctaKey: "navCtaGetStarted",
+        ctaIcon: "fa-arrow-right",
+        cta: () => setRole("landing"),
+        secondaryLabelKey: "navSecondaryExplore",
+        secondaryCtaKey: "customer",
+        secondary: () => setRole("customer"),
+        items: [
+          { key: "services", labelKey: "navItemExplore", hintKey: "navItemExploreHint", run: () => setRole("customer") },
+          { key: "how", labelKey: "navItemHowItWorks", hintKey: "navItemHowItWorksHint", run: () => setRole("landing") },
+          { key: "track", labelKey: "navItemTrack", hintKey: "navItemTrackHint", run: () => goToTracking() },
+          { key: "about", labelKey: "navItemAbout", hintKey: "navItemAboutHint", run: () => setRole("landing") }
+        ]
+      },
+      customer: {
+        icon: "fa-user",
+        titleKey: "customer",
+        descKey: "navCustomerHint",
+        ctaKey: "createAccountCta",
+        ctaIcon: "fa-user-plus",
+        cta: () => { setRole("customer"); currentView.value = loggedInCustomer.value ? "dashboard" : "register"; },
+        secondaryLabelKey: "navSecondaryHaveAccount",
+        secondaryCtaKey: "loginButton",
+        secondary: () => { setRole("customer"); },
+        items: [
+          { key: "book", labelKey: "navItemBook", hintKey: "navItemBookHint", run: () => { setRole("customer"); if (loggedInCustomer.value) navigateTo("dashboard"); } },
+          { key: "bookings", labelKey: "myBookings", hintKey: "navItemMyBookingsHint", run: () => { setRole("customer"); if (loggedInCustomer.value) navigateTo("myBookings"); } },
+          { key: "track", labelKey: "navItemTrack", hintKey: "navItemTrackHint", run: () => goToTracking() },
+          { key: "account", labelKey: "navItemAccount", hintKey: "navItemAccountHint", run: () => { setRole("customer"); if (loggedInCustomer.value) navigateTo("dashboard"); } }
+        ]
+      },
+      worker: {
+        icon: "fa-wrench",
+        titleKey: "worker",
+        descKey: "navWorkerHint",
+        ctaKey: "navCtaRegisterWorker",
+        ctaIcon: "fa-helmet-safety",
+        cta: () => { setRole("worker"); currentView.value = loggedInWorker.value ? "dashboard" : "register"; },
+        secondaryLabelKey: "navSecondaryRegistered",
+        secondaryCtaKey: "loginButton",
+        secondary: () => { setRole("worker"); },
+        items: [
+          { key: "dashboard", labelKey: "navItemWorkerDashboard", hintKey: "navItemWorkerDashboardHint", run: () => { setRole("worker"); if (loggedInWorker.value) navigateTo("dashboard"); } },
+          { key: "requests", labelKey: "navItemAvailableRequests", hintKey: "navItemAvailableRequestsHint", run: () => { setRole("worker"); if (loggedInWorker.value) navigateTo("requests"); } },
+          { key: "jobs", labelKey: "navItemMyJobs", hintKey: "navItemMyJobsHint", run: () => { setRole("worker"); if (loggedInWorker.value) navigateTo("orders"); } },
+          { key: "profile", labelKey: "navItemWorkerProfile", hintKey: "navItemWorkerProfileHint", run: () => { setRole("worker"); if (loggedInWorker.value) navigateTo("profile"); } }
+        ]
+      },
+      admin: {
+        icon: "fa-shield-halved",
+        titleKey: "admin",
+        descKey: "navAdminHint",
+        // Administrator accounts are provisioned by the registrar, never by a
+        // public form (there is no POST /auth/admin/register), so this asks
+        // for access instead of pretending to create an account.
+        ctaKey: "navCtaRequestAdmin",
+        ctaIcon: "fa-id-badge",
+        cta: () => { setRole("admin"); showToast(t("navAdminRequestToast"), t("navAdminRequestHint"), "info", 6000); },
+        secondaryLabelKey: "navSecondaryHaveAccess",
+        secondaryCtaKey: "loginButton",
+        secondary: () => { setRole("admin"); },
+        items: [
+          { key: "dashboard", labelKey: "navItemAdminDashboard", hintKey: "navItemAdminDashboardHint", run: () => { setRole("admin"); if (loggedInAdmin.value) navigateTo("dashboard"); } },
+          { key: "workers", labelKey: "navItemWorkerMgmt", hintKey: "navItemWorkerMgmtHint", run: () => { setRole("admin"); if (loggedInAdmin.value) { navigateTo("dashboard"); adminTab.value = "workers"; } } },
+          { key: "customers", labelKey: "navItemCustomerMgmt", hintKey: "navItemCustomerMgmtHint", run: () => { setRole("admin"); if (loggedInAdmin.value) { navigateTo("dashboard"); adminTab.value = "customers"; } } },
+          { key: "bookings", labelKey: "navItemBookingMgmt", hintKey: "navItemBookingMgmtHint", run: () => { setRole("admin"); if (loggedInAdmin.value) { navigateTo("dashboard"); adminTab.value = "bookingsLedger"; } } },
+          { key: "monitor", labelKey: "navItemMonitoring", hintKey: "navItemMonitoringHint", run: () => { setRole("admin"); if (loggedInAdmin.value) { navigateTo("dashboard"); adminTab.value = "liveWorkers"; } } }
+        ]
+      }
+    };
+
+    const navCard = computed(() => {
+      const def = NAV_CARDS[openNavCard.value] ?? NAV_CARDS.landing;
+      return {
+        icon: def.icon,
+        ctaIcon: def.ctaIcon,
+        title: t(def.titleKey),
+        description: t(def.descKey),
+        cta: t(def.ctaKey),
+        secondaryLabel: t(def.secondaryLabelKey),
+        secondaryCta: t(def.secondaryCtaKey),
+        items: def.items.map((i) => ({ key: i.key, label: t(i.labelKey), hint: t(i.hintKey), run: i.run }))
+      };
+    });
+
+    const openNavCardFor = (role) => {
+      clearTimeout(navCardTimer);
+      openNavCard.value = role;
+    };
+    const holdNavCard = () => clearTimeout(navCardTimer);
+    const closeNavCard = () => {
+      clearTimeout(navCardTimer);
+      openNavCard.value = null;
+    };
+    const scheduleCloseNavCard = () => {
+      clearTimeout(navCardTimer);
+      navCardTimer = setTimeout(() => (openNavCard.value = null), 220);
+    };
+    const runNavCardItem = (item) => {
+      item.run();
+      closeNavCard();
+    };
+    const runNavCardCta = () => {
+      NAV_CARDS[openNavCard.value ?? "landing"].cta();
+      closeNavCard();
+    };
+    const runNavCardSecondary = () => {
+      NAV_CARDS[openNavCard.value ?? "landing"].secondary();
+      closeNavCard();
+    };
+    // "Track booking" from any menu: open the active booking if there is one.
+    const goToTracking = () => {
+      setRole("customer");
+      if (!loggedInCustomer.value) return;
+      if (activeBookingId.value) viewBooking(activeBookingId.value);
+      else navigateTo("myBookings");
+    };
+
+    // The wider pool ran and nobody was reachable -- a real outcome, not a
+    // spinner state.
+    const noWorkersAvailable = computed(
+      () => activeBooking.value?.status === "DISPATCHING_POOL" && dispatchCandidates.value.candidates.length === 0
+    );
 
     const viewBooking = async (bookingId) => {
       activeBookingId.value = bookingId;
@@ -1200,6 +1548,7 @@ const app = createApp({
     });
 
     onUnmounted(() => {
+      if (trackingTicker) clearInterval(trackingTicker);
       if (locationPingInterval) clearInterval(locationPingInterval);
       if (candidatePollInterval) clearInterval(candidatePollInterval);
       stopOfferTicker();
@@ -1988,6 +2337,7 @@ const app = createApp({
       handleLogin,
       handleRegister,
       demoAccounts,
+      demoAccountsForRole,
       demoBusyRole,
       demoLogin,
       handleLogout,
@@ -1997,6 +2347,30 @@ const app = createApp({
       platformStats,
       customerBookings,
       activeBookingId,
+      trackingSteps,
+      trackingStepIndex,
+      trackingDistanceKm,
+      trackingEtaLabel,
+      trackingEtaMinutes,
+      trackingProgress,
+      trackingHasLocation,
+      trackingIsStale,
+      trackingLastUpdatedLabel,
+      trackingCancelled,
+      openNavCard,
+      navCard,
+      openNavCardFor,
+      closeNavCard,
+      holdNavCard,
+      scheduleCloseNavCard,
+      runNavCardItem,
+      runNavCardCta,
+      runNavCardSecondary,
+      noWorkersAvailable,
+      trackingStartCode,
+      bookingReference,
+      simulateNextUpdate,
+      simulateBusy,
       activeBooking,
       dispatchCandidates,
       requestForm,
