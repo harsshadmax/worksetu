@@ -2533,6 +2533,14 @@
                     <i class="fa-solid fa-arrow-right text-[10px]"></i>
                   </button>
 
+                  <button
+                    type="button"
+                    @click="currentView = 'register'"
+                    class="w-full min-h-[46px] px-4 rounded-xl border border-custom-primary/40 bg-custom-very-light-blue text-custom-primary text-xs font-bold uppercase-track hover:border-custom-primary hover:bg-custom-light-blue transition flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-custom-primary">
+                    <i class="fa-solid fa-helmet-safety text-[11px]" aria-hidden="true"></i>
+                    <span>{{ t('navCtaRegisterWorker') }}</span>
+                  </button>
+
                   <!-- Demo login: one click signs in as that role's seeded account -->
                   <div class="pt-5 border-t border-custom-border/60">
                     <p class="text-[10px] font-extrabold uppercase-track text-custom-sec mb-3">{{ t('demoLoginLabel') }}</p>
@@ -3729,6 +3737,14 @@
                     <i v-if="authBusy" class="fa-solid fa-spinner fa-spin"></i>
                     <span>{{ t('loginButton') }}</span>
                     <i class="fa-solid fa-arrow-right text-[10px]"></i>
+                  </button>
+
+                  <button
+                    type="button"
+                    @click="showToast(t('navAdminRequestToast'), t('navAdminRequestHint'), 'info', 6000)"
+                    class="w-full min-h-[46px] px-4 rounded-xl border border-custom-primary/40 bg-custom-very-light-blue text-custom-primary text-xs font-bold uppercase-track hover:border-custom-primary hover:bg-custom-light-blue transition flex items-center justify-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-custom-primary">
+                    <i class="fa-solid fa-id-badge text-[11px]" aria-hidden="true"></i>
+                    <span>{{ t('navCtaRequestAdmin') }}</span>
                   </button>
 
                   <!-- Demo login: one click signs in as that role's seeded account -->
